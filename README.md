@@ -142,10 +142,6 @@ Intelligent scoring system:
 - [FP Filter Logic](docs/fp_filter_guide.md) - False positive filtering explained
 - [Architecture](docs/ARCHITECTURE.md) - System design and data flow
 
-## 🤝 Contributing
-
-Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
 ## ⚠️ Disclaimer
 
 **For authorized security testing only.** Always obtain proper authorization before testing any system you do not own.
