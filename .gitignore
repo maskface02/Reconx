@@ -1,10 +1,213 @@
+# =============================================================================
+# reconx - Python Penetration Testing Framework
+# .gitignore
+# =============================================================================
+
+# =============================================================================
+# Python
+# =============================================================================
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
-*.egg-info/
-dist/
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
 build/
-.venv/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+
+# Virtual environments
 venv/
+ENV/
+env/
+.venv
+env.bak/
+venv.bak/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+*.sublime-project
+*.sublime-workspace
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# poetry
+poetry.lock
+
+# pdm
+.pdm.toml
+
+# =============================================================================
+# reconx Specific
+# =============================================================================
+
+# Workspaces (sensitive data)
 workspaces/
-*.log
+!workspaces/.gitkeep
+
+# Configuration files (may contain API keys)
+config.yaml
+config.yml
+*.config.yaml
+*.config.yml
+
+# Environment files
 .env
+.env.local
+.env.*.local
+
+# Secrets and credentials
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+credentials/
+
+# Output files
+*.log
+*.jsonl
+*.txt
+!requirements.txt
+!setup_tools.sh
+!wordlists.txt
+
+# Raw tool outputs (large files)
+*.raw
+raw/
+
+# Exploitation artifacts
+exploits/
+payloads/
+shells/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Cache
+.cache/
+*.cache
+
+# Downloaded wordlists (large files)
+wordlists/
+*.txt.gz
+*.txt.bz2
+
+# Nuclei templates (should be installed separately)
+nuclei-templates/
+
+# Masscan output (potentially large)
+*.masscan
+
+# =============================================================================
+# OS Specific
+# =============================================================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.nfs*
+
+# =============================================================================
+# Security
+# =============================================================================
+
+# Never commit actual findings or reports
+reports/
+findings/
+vulnerabilities/
+exploit_results/
+
+# Session data
+.session
+*.session
+
+# Tool-specific sensitive files
+.amass/
+sqlmap/
+.nmap/
+.nikto/
+.sqlmap/
+.trufflehog/
