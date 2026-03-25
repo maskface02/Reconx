@@ -39,6 +39,11 @@ case $ARCH in
     *) GO_ARCH="amd64" ;;
 esac
 
+# Package manager detection
+PKG_MANAGER=""
+PKG_UPDATE=""
+PKG_INSTALL=""
+
 # Counters
 declare -i INSTALLED=0
 declare -i SKIPPED=0
@@ -65,7 +70,6 @@ python_pkg_installed() {
 }
 
 get_pip_flags() {
-    # Check for externally-managed environment (Debian 12+, Ubuntu 23.04+)
     if [ -f "/usr/lib/python3.11/EXTERNALLY-MANAGED" ] || \
        [ -f "/usr/lib/python3.12/EXTERNALLY-MANAGED" ] || \
        [ -f "/usr/lib/python3.13/EXTERNALLY-MANAGED" ]; then
@@ -78,15 +82,124 @@ get_pip_flags() {
 pip_install() {
     local package=$1
     local flags=$(get_pip_flags)
+    python3 -m pip install --quiet $flags "$package" 2>/dev/null
+}
+
+# ── Package Manager Detection ───────────────────────────────────────────────
+detect_pkg_manager() {
+    if command_exists apt-get; then
+        PKG_MANAGER="apt-get"
+        PKG_UPDATE="apt-get update -qq"
+        PKG_INSTALL="apt-get install -y -qq"
+    elif command_exists dnf; then
+        PKG_MANAGER="dnf"
+        PKG_UPDATE="dnf check-update || true"
+        PKG_INSTALL="dnf install -y"
+    elif command_exists yum; then
+        PKG_MANAGER="yum"
+        PKG_UPDATE="yum check-update || true"
+        PKG_INSTALL="yum install -y"
+    elif command_exists pacman; then
+        PKG_MANAGER="pacman"
+        PKG_UPDATE="pacman -Sy"
+        PKG_INSTALL="pacman -S --noconfirm"
+    elif command_exists brew; then
+        PKG_MANAGER="brew"
+        PKG_UPDATE="brew update"
+        PKG_INSTALL="brew install"
+    elif command_exists zypper; then
+        PKG_MANAGER="zypper"
+        PKG_UPDATE="zypper refresh"
+        PKG_INSTALL="zypper install -y"
+    fi
+}
+
+# ── Requirement Installation ────────────────────────────────────────────────
+install_requirement() {
+    local tool=$1
+    local package=${2:-$1}
     
-    if python3 -m pip install --quiet $flags "$package" 2>/dev/null; then
+    log_info "Installing $tool..."
+    
+    if [ -z "$PKG_MANAGER" ]; then
+        log_error "No supported package manager found. Please install $tool manually."
+        return 1
+    fi
+    
+    # Handle special cases for package names
+    case $tool in
+        pip3)
+            case $PKG_MANAGER in
+                apt-get) package="python3-pip" ;;
+                yum|dnf) package="python3-pip" ;;
+                pacman) package="python-pip" ;;
+                brew) package="python3" ;;  # pip comes with python3 on macOS
+            esac
+            ;;
+        python3)
+            case $PKG_MANAGER in
+                pacman) package="python" ;;
+                *) package="python3" ;;
+            esac
+            ;;
+    esac
+    
+    if $IS_ROOT || [ "$PKG_MANAGER" = "brew" ]; then
+        $PKG_INSTALL $package 2>/dev/null || {
+            log_error "Failed to install $tool via $PKG_MANAGER"
+            return 1
+        }
+    else
+        log_error "Cannot install $tool without sudo. Run with sudo or install manually:"
+        echo "  sudo $PKG_INSTALL $package"
+        return 1
+    fi
+    
+    # Verify installation
+    if command_exists "$tool"; then
+        log_success "$tool installed successfully"
         return 0
     else
+        log_error "$tool installation verification failed"
         return 1
     fi
 }
 
-# ── Initialization ───────────────────────────────────────────────────────────
+check_requirements() {
+    log_section "Checking Requirements"
+    
+    detect_pkg_manager
+    if [ -n "$PKG_MANAGER" ]; then
+        log_info "Package manager detected: $PKG_MANAGER"
+        log_info "Updating package lists..."
+        $PKG_UPDATE 2>/dev/null || true
+    else
+        log_warning "No standard package manager found"
+    fi
+    
+    local required_tools=("git" "python3" "pip3" "curl" "wget")
+    local all_good=true
+    
+    for tool in "${required_tools[@]}"; do
+        if command_exists "$tool"; then
+            log_success "$tool found"
+        else
+            log_warning "$tool not found - attempting installation..."
+            if install_requirement "$tool"; then
+                : # Success, continue
+            else
+                all_good=false
+            fi
+        fi
+    done
+    
+    if ! $all_good; then
+        echo ""
+        log_error "Some requirements could not be installed. Please install them manually and retry."
+        exit 1
+    fi
+}
+
 detect_system() {
     if [ -f /etc/os-release ]; then
         . /etc/os-release
@@ -96,52 +209,31 @@ detect_system() {
     fi
 }
 
-check_requirements() {
-    log_section "Checking Requirements"
-    local ok=true
-    for tool in git python3 pip3 curl wget; do
-        if command_exists "$tool"; then
-            log_success "$tool found"
-        else
-            log_error "$tool not found"
-            ok=false
-        fi
-    done
-    $ok || exit 1
-}
-
-update_packages() {
-    $IS_ROOT || return 0
-    log_info "Updating package lists..."
-    if command_exists apt-get; then
-        apt-get update -qq || true
-    elif command_exists yum; then
-        yum check-update || true
-    elif command_exists pacman; then
-        pacman -Sy
-    fi
-}
-
 # ── System Dependencies ──────────────────────────────────────────────────────
 install_system_deps() {
     $IS_ROOT || { log_warning "Skipping system packages (requires sudo)"; return 0; }
     
     log_section "Installing System Dependencies"
-    local packages="git curl wget python3 python3-pip python3-venv build-essential
-    libpcap-dev libssl-dev zlib1g-dev libxml2-dev libxslt1-dev libffi-dev 
-    libsqlite3-dev libcurl4-openssl-dev libjpeg-dev libpng-dev pkg-config 
-    cmake unzip jq perl libnet-ssleay-perl libauthen-pam-perl libio-pty-perl 
-    apt-utils python3-tk chromium chromium-driver libjson-perl libxml-writer-perl"
     
-    if command_exists apt-get; then
-        apt-get install -y -qq $packages 2>/dev/null || apt-get install -y $packages
-    elif command_exists yum; then
-        yum groupinstall -y "Development Tools"
-        yum install -y ${packages//build-essential/"gcc gcc-c++ make"}
-    elif command_exists pacman; then
-        pacman -S --noconfirm base-devel git python python-pip cmake
-    fi
-    log_success "System dependencies installed"
+    local packages=""
+    case $PKG_MANAGER in
+        apt-get)
+            packages="build-essential libpcap-dev libssl-dev zlib1g-dev libxml2-dev libxslt1-dev libffi-dev libsqlite3-dev libcurl4-openssl-dev libjpeg-dev libpng-dev pkg-config cmake unzip jq perl libnet-ssleay-perl libauthen-pam-perl libio-pty-perl apt-utils python3-tk chromium chromium-driver libjson-perl libxml-writer-perl"
+            ;;
+        yum|dnf)
+            packages="gcc gcc-c++ make libpcap-devel openssl-devel zlib-devel libxml2-devel libxslt-devel libffi-devel sqlite-devel libcurl-devel libjpeg-devel libpng-devel pkgconfig cmake unzip jq perl perl-Net-SSLeay perl-Authen-Pam perl-IO-Tty python3-tkinter chromium chromium-headless"
+            ;;
+        pacman)
+            packages="base-devel libpcap openssl zlib libxml2 libxslt libffi sqlite curl libjpeg-turbo libpng pkgconf cmake unzip jq perl perl-net-ssleay python tk chromium"
+            ;;
+        *)
+            log_warning "Unknown package manager, skipping system dependencies"
+            return 0
+            ;;
+    esac
+    
+    $PKG_INSTALL $packages 2>/dev/null && log_success "System dependencies installed" || \
+        log_warning "Some system packages failed to install (non-critical)"
 }
 
 # ── Go Installation ─────────────────────────────────────────────────────────
@@ -193,7 +285,6 @@ install_go_tools() {
     log_section "Installing Go-Based Tools"
     export PATH="$PATH:$GO_INSTALL_DIR/go/bin:$HOME/go/bin"
     
-    # Format: "url:name"
     declare -A tools=(
         ["github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"]="subfinder"
         ["github.com/owasp-amass/amass/v4/...@master"]="amass"
@@ -221,12 +312,10 @@ install_go_tools() {
         fi
     done
     
-    # Nuclei templates
     if command_exists nuclei; then
         nuclei -update-templates 2>/dev/null || true
     fi
     
-    # GF patterns
     if [ -f "$INSTALL_DIR/gf" ] || [ -f "$HOME/go/bin/gf" ]; then
         mkdir -p ~/.gf
         rm -rf /tmp/Gf-Patterns
@@ -244,12 +333,7 @@ install_nmap() {
     fi
     $IS_ROOT || { log_warning "nmap requires sudo"; return; }
     
-    if command_exists apt-get; then
-        apt-get install -y -qq nmap 2>/dev/null || apt-get install -y nmap
-    elif command_exists yum; then
-        yum install -y nmap
-    fi
-    command_exists nmap && log_success "nmap installed" || log_error "nmap failed"
+    $PKG_INSTALL nmap 2>/dev/null && log_success "nmap installed" || log_error "nmap failed"
 }
 
 install_masscan() {
@@ -506,7 +590,6 @@ install_git_tools() {
 install_python_deps() {
     log_section "Installing Python Dependencies"
     
-    # Upgrade pip first
     pip_install "--upgrade pip" || true
     
     local deps=(
@@ -594,9 +677,8 @@ print_summary() {
 
 main() {
     print_banner
-    check_requirements
     detect_system
-    update_packages
+    check_requirements
     install_system_deps
     install_go
     install_go_tools
