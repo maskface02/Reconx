@@ -346,14 +346,41 @@ install_nmap() {
         log_warning "nmap already installed"
         return
     fi
-    $IS_ROOT || { log_warning "nmap requires sudo"; return; }
+    
+    $IS_ROOT || { 
+        log_warning "nmap requires sudo"
+        return
+    }
+    
+    log_info "Installing nmap..."
     
     case $PKG_MANAGER in
-        pacman) $PKG_INSTALL nmap ;;
-        *) $PKG_INSTALL nmap 2>/dev/null ;;
+        pacman)
+            # Arch: Try normal install first, fallback to overwrite on lua conflicts
+            if pacman -S --noconfirm nmap 2>/dev/null; then
+                log_success "nmap installed"
+            else
+                log_warning "Retrying with overwrite flag (handling lua package conflict)..."
+                pacman -S --noconfirm --overwrite '*' nmap 2>/dev/null && \
+                    log_success "nmap installed (conflicts resolved)" || \
+                    log_error "nmap installation failed"
+            fi
+            ;;
+        apt-get)
+            apt-get install -y -qq nmap 2>/dev/null && \
+                log_success "nmap installed" || \
+                log_error "nmap failed"
+            ;;
+        yum|dnf)
+            $PKG_INSTALL nmap 2>/dev/null && \
+                log_success "nmap installed" || \
+                log_error "nmap failed"
+            ;;
+        *)
+            log_error "Unsupported package manager for nmap installation"
+            return
+            ;;
     esac
-    
-    command_exists nmap && log_success "nmap installed" || log_error "nmap failed"
 }
 
 install_masscan() {
