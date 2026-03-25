@@ -91,6 +91,10 @@ detect_pkg_manager() {
         PKG_MANAGER="apt-get"
         PKG_UPDATE="apt-get update -qq"
         PKG_INSTALL="apt-get install -y -qq"
+    elif command_exists pacman; then
+        PKG_MANAGER="pacman"
+        PKG_UPDATE="pacman -Sy"
+        PKG_INSTALL="pacman -S --noconfirm"
     elif command_exists dnf; then
         PKG_MANAGER="dnf"
         PKG_UPDATE="dnf check-update || true"
@@ -99,10 +103,6 @@ detect_pkg_manager() {
         PKG_MANAGER="yum"
         PKG_UPDATE="yum check-update || true"
         PKG_INSTALL="yum install -y"
-    elif command_exists pacman; then
-        PKG_MANAGER="pacman"
-        PKG_UPDATE="pacman -Sy"
-        PKG_INSTALL="pacman -S --noconfirm"
     elif command_exists brew; then
         PKG_MANAGER="brew"
         PKG_UPDATE="brew update"
@@ -133,7 +133,7 @@ install_requirement() {
                 apt-get) package="python3-pip" ;;
                 yum|dnf) package="python3-pip" ;;
                 pacman) package="python-pip" ;;
-                brew) package="python3" ;;  # pip comes with python3 on macOS
+                brew) package="python3" ;;
             esac
             ;;
         python3)
@@ -155,7 +155,6 @@ install_requirement() {
         return 1
     fi
     
-    # Verify installation
     if command_exists "$tool"; then
         log_success "$tool installed successfully"
         return 0
@@ -186,7 +185,7 @@ check_requirements() {
         else
             log_warning "$tool not found - attempting installation..."
             if install_requirement "$tool"; then
-                : # Success, continue
+                : # Success
             else
                 all_good=false
             fi
@@ -200,10 +199,26 @@ check_requirements() {
     fi
 }
 
+# FIX: Handle missing VERSION_ID on Arch Linux and other rolling distros
 detect_system() {
+    local os_name="Unknown"
+    local os_version="unknown"
+    
     if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        log_info "Detected: $NAME $VERSION_ID ($ARCH)"
+        # Read vars safely, providing defaults if missing
+        while IFS='=' read -r key value; do
+            case "$key" in
+                NAME) os_name="${value//\"/}" ;;
+                VERSION_ID) os_version="${value//\"/}" ;;
+            esac
+        done < /etc/os-release
+        
+        # Arch and other rolling distros don't have VERSION_ID
+        if [ -z "$os_version" ] || [ "$os_version" = "unknown" ]; then
+            os_version="rolling"
+        fi
+        
+        log_info "Detected: $os_name $os_version ($ARCH)"
     else
         log_info "Detected: $(uname -s) $(uname -r) ($ARCH)"
     fi
@@ -220,11 +235,11 @@ install_system_deps() {
         apt-get)
             packages="build-essential libpcap-dev libssl-dev zlib1g-dev libxml2-dev libxslt1-dev libffi-dev libsqlite3-dev libcurl4-openssl-dev libjpeg-dev libpng-dev pkg-config cmake unzip jq perl libnet-ssleay-perl libauthen-pam-perl libio-pty-perl apt-utils python3-tk chromium chromium-driver libjson-perl libxml-writer-perl"
             ;;
-        yum|dnf)
-            packages="gcc gcc-c++ make libpcap-devel openssl-devel zlib-devel libxml2-devel libxslt-devel libffi-devel sqlite-devel libcurl-devel libjpeg-devel libpng-devel pkgconfig cmake unzip jq perl perl-Net-SSLeay perl-Authen-Pam perl-IO-Tty python3-tkinter chromium chromium-headless"
-            ;;
         pacman)
-            packages="base-devel libpcap openssl zlib libxml2 libxslt libffi sqlite curl libjpeg-turbo libpng pkgconf cmake unzip jq perl perl-net-ssleay python tk chromium"
+            packages="base-devel libpcap openssl zlib libxml2 libxslt libffi sqlite curl libjpeg-turbo libpng pkgconf cmake unzip jq perl perl-net-ssleay tk chromium"
+            ;;
+        yum|dnf)
+            packages="gcc gcc-c++ make libpcap-devel openssl-devel zlib-devel libxml2-devel libxslt-devel libffi-devel sqlite-devel libcurl-devel libjpeg-devel libpng-devel pkgconfig cmake unzip jq perl perl-Net-SSLeay perl-Authen-Pam perl-IO-Tty python3-tkinter chromium"
             ;;
         *)
             log_warning "Unknown package manager, skipping system dependencies"
@@ -333,7 +348,12 @@ install_nmap() {
     fi
     $IS_ROOT || { log_warning "nmap requires sudo"; return; }
     
-    $PKG_INSTALL nmap 2>/dev/null && log_success "nmap installed" || log_error "nmap failed"
+    case $PKG_MANAGER in
+        pacman) $PKG_INSTALL nmap ;;
+        *) $PKG_INSTALL nmap 2>/dev/null ;;
+    esac
+    
+    command_exists nmap && log_success "nmap installed" || log_error "nmap failed"
 }
 
 install_masscan() {
@@ -677,8 +697,8 @@ print_summary() {
 
 main() {
     print_banner
-    detect_system
     check_requirements
+    detect_system
     install_system_deps
     install_go
     install_go_tools
