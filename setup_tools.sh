@@ -74,7 +74,6 @@ is_arch_based() {
 }
 
 get_pip_flags() {
-    # Check for externally-managed environment (Debian 12+, Ubuntu 23.04+, Arch)
     if [ -f "/usr/lib/python3.11/EXTERNALLY-MANAGED" ] || \
        [ -f "/usr/lib/python3.12/EXTERNALLY-MANAGED" ] || \
        [ -f "/usr/lib/python3.13/EXTERNALLY-MANAGED" ]; then
@@ -84,12 +83,10 @@ get_pip_flags() {
     fi
 }
 
-# Updated pip_install with Arch Linux pacman fallback
 pip_install() {
     local package=$1
     local flags=$(get_pip_flags)
     
-    # Try pip install first
     if python3 -m pip install --quiet $flags "$package" 2>/dev/null; then
         return 0
     fi
@@ -104,7 +101,7 @@ pip_install() {
             lxml) pacman_pkg="python-lxml" ;;
             requests) pacman_pkg="python-requests" ;;
             colorama) pacman_pkg="python-colorama" ;;
-            arjun) pacman_pkg="arjun" ;;
+            pipx) pacman_pkg="python-pipx" ;;
         esac
         
         if [ -n "$pacman_pkg" ]; then
@@ -175,6 +172,14 @@ install_requirement() {
                 *) package="python3" ;;
             esac
             ;;
+        pipx)
+            case $PKG_MANAGER in
+                apt-get) package="pipx" ;;
+                pacman) package="python-pipx" ;;
+                yum|dnf) package="pipx" ;;
+                brew) package="pipx" ;;
+            esac
+            ;;
     esac
     
     if $IS_ROOT || [ "$PKG_MANAGER" = "brew" ]; then
@@ -209,7 +214,8 @@ check_requirements() {
         log_warning "No standard package manager found"
     fi
     
-    local required_tools=("git" "python3" "pip3" "curl" "wget")
+    # Added pipx to required tools
+    local required_tools=("git" "python3" "pip3" "pipx" "curl" "wget")
     local all_good=true
     
     for tool in "${required_tools[@]}"; do
@@ -225,6 +231,11 @@ check_requirements() {
         fi
     done
     
+    # Ensure pipx path is set up
+    if command_exists pipx; then
+        pipx ensurepath 2>/dev/null || true
+    fi
+    
     if ! $all_good; then
         echo ""
         log_error "Some requirements could not be installed. Please install them manually and retry."
@@ -232,7 +243,6 @@ check_requirements() {
     fi
 }
 
-# FIX: Handle missing VERSION_ID on Arch Linux and other rolling distros
 detect_system() {
     local os_name="Unknown"
     local os_version="unknown"
@@ -264,13 +274,13 @@ install_system_deps() {
     local packages=""
     case $PKG_MANAGER in
         apt-get)
-            packages="build-essential libpcap-dev libssl-dev zlib1g-dev libxml2-dev libxslt1-dev libffi-dev libsqlite3-dev libcurl4-openssl-dev libjpeg-dev libpng-dev pkg-config cmake unzip jq perl libnet-ssleay-perl libauthen-pam-perl libio-pty-perl apt-utils python3-tk chromium chromium-driver libjson-perl libxml-writer-perl"
+            packages="build-essential libpcap-dev libssl-dev zlib1g-dev libxml2-dev libxslt1-dev libffi-dev libsqlite3-dev libcurl4-openssl-dev libjpeg-dev libpng-dev pkg-config cmake unzip jq perl libnet-ssleay-perl libauthen-pam-perl libio-pty-perl apt-utils python3-tk chromium chromium-driver libjson-perl libxml-writer-perl pipx"
             ;;
         pacman)
-            packages="base-devel libpcap openssl zlib libxml2 libxslt libffi sqlite curl libjpeg-turbo libpng pkgconf cmake unzip jq perl perl-net-ssleay tk chromium"
+            packages="base-devel libpcap openssl zlib libxml2 libxslt libffi sqlite curl libjpeg-turbo libpng pkgconf cmake unzip jq perl perl-net-ssleay tk chromium python-pipx"
             ;;
         yum|dnf)
-            packages="gcc gcc-c++ make libpcap-devel openssl-devel zlib-devel libxml2-devel libxslt-devel libffi-devel sqlite-devel libcurl-devel libjpeg-devel libpng-devel pkgconfig cmake unzip jq perl perl-Net-SSLeay perl-Authen-Pam perl-IO-Tty python3-tkinter chromium"
+            packages="gcc gcc-c++ make libpcap-devel openssl-devel zlib-devel libxml2-devel libxslt-devel libffi-devel sqlite-devel libcurl-devel libjpeg-devel libpng-devel pkgconfig cmake unzip jq perl perl-Net-SSLeay perl-Authen-Pam perl-IO-Tty python3-tkinter chromium pipx"
             ;;
         *)
             log_warning "Unknown package manager, skipping system dependencies"
@@ -384,7 +394,6 @@ install_nmap() {
     
     case $PKG_MANAGER in
         pacman)
-            # Arch: Handle file conflicts (lua package conflicts)
             if pacman -S --noconfirm --needed nmap 2>/dev/null; then
                 log_success "nmap installed"
             else
@@ -665,10 +674,8 @@ install_git_tools() {
 install_python_deps() {
     log_section "Installing Python Dependencies"
     
-    # Upgrade pip first
     pip_install "--upgrade pip" || true
     
-    # Arch-specific: Install via pacman where available for cleaner system integration
     if is_arch_based && $IS_ROOT; then
         log_info "Arch detected: Using pacman for Python packages..."
         local arch_python_pkgs="python-termcolor python-jsbeautifier python-pycryptodomex python-lxml python-requests python-colorama"
@@ -699,23 +706,39 @@ install_python_deps() {
     done
 }
 
+# Updated install_arjun using pipx
 install_arjun() {
-    log_section "Installing Arjun"
+    log_section "Installing Arjun (via pipx)"
+    
     if command_exists arjun; then
         log_warning "arjun already installed"
         return
     fi
     
-    # Try pacman first on Arch (arjun is available in BlackArch/community)
-    if is_arch_based && $IS_ROOT; then
-        if pacman -S --noconfirm --needed arjun 2>/dev/null; then
-            log_success "arjun installed via pacman"
+    # Ensure pipx is installed first
+    if ! command_exists pipx; then
+        log_warning "pipx not found, attempting to install..."
+        if install_requirement "pipx"; then
+            pipx ensurepath 2>/dev/null || true
+            export PATH="$HOME/.local/bin:$PATH"
+        else
+            log_error "Cannot install arjun without pipx"
             return
         fi
     fi
     
-    log_info "Installing arjun via pip..."
-    pip_install "arjun" && log_success "arjun installed" || log_error "arjun failed"
+    # Install arjun via pipx
+    log_info "Installing arjun via pipx..."
+    if pipx install arjun 2>/dev/null; then
+        log_success "arjun installed via pipx"
+        
+        # Create symlink in INSTALL_DIR if it's not in PATH
+        if [ ! -f "$INSTALL_DIR/arjun" ] && [ -f "$HOME/.local/bin/arjun" ]; then
+            ln -sf "$HOME/.local/bin/arjun" "$INSTALL_DIR/arjun" 2>/dev/null || true
+        fi
+    else
+        log_error "arjun installation via pipx failed"
+    fi
 }
 
 # ── Wordlists ───────────────────────────────────────────────────────────────
@@ -763,6 +786,7 @@ print_summary() {
         echo "Add to your ~/.bashrc or ~/.zshrc:"
         echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
         echo "  export PATH=\"\$HOME/go/bin:\$PATH\""
+        echo "  export PATH=\"\$HOME/.local/bin:\$PATH\"  # For pipx tools"
         echo ""
     fi
     
