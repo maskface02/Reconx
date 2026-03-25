@@ -3,7 +3,7 @@ Report generator for reconx framework.
 Generates findings summaries in various formats.
 """
 import json
-from pathlib import path 
+from pathlib import Path 
 from datetime import datetime
 from typing import List, Dict, Any
 from core.workspace import Workspace

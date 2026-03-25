@@ -1,52 +1,54 @@
 #!/bin/bash
 #
-# reconx Tools Setup Script
-# Clones and builds all penetration testing tools from source
-# Works on Ubuntu/Debian and other Linux distributions
+# ReconX Unified Setup Script
+# https://github.com/maskface02/Reconx
 #
 
-set -e  # Exit on any error
+set -euo pipefail
 
-# Colors for output
+# ── Colors ───────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Configuration
-INSTALL_DIR="/usr/local/bin"
-OPT_DIR="/opt"
+# ── Configuration ────────────────────────────────────────────────────────────
+IS_ROOT=false
+[[ $EUID -eq 0 ]] && IS_ROOT=true
+
+if $IS_ROOT; then
+    INSTALL_DIR="/usr/local/bin"
+    OPT_DIR="/opt"
+    WORDLIST_DIR="/usr/share/wordlists"
+    GO_INSTALL_DIR="/usr/local"
+else
+    INSTALL_DIR="$HOME/.local/bin"
+    OPT_DIR="$HOME/.local/opt"
+    WORDLIST_DIR="$HOME/.local/share/wordlists"
+    GO_INSTALL_DIR="$HOME/.local"
+    mkdir -p "$INSTALL_DIR" "$OPT_DIR" "$WORDLIST_DIR"
+fi
+
 GO_VERSION="1.22.0"
-GO_INSTALL_DIR="/usr/local"
-WORDLIST_DIR="/usr/share/wordlists"
+ARCH=$(uname -m)
+case $ARCH in
+    x86_64) GO_ARCH="amd64" ;;
+    aarch64|arm64) GO_ARCH="arm64" ;;
+    *) GO_ARCH="amd64" ;;
+esac
 
 # Counters
-INSTALLED=0
-FAILED=0
-SKIPPED=0
+declare -i INSTALLED=0
+declare -i SKIPPED=0
+declare -i FAILED=0
 
-# Logging functions
-log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1"
-}
-
-log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-    ((INSTALLED++))
-}
-
-log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
-    ((SKIPPED++))
-}
-
-log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-    ((FAILED++))
-}
-
+# ── Logging ──────────────────────────────────────────────────────────────────
+log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
+log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; INSTALLED=$((INSTALLED + 1)); }
+log_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; SKIPPED=$((SKIPPED + 1)); }
+log_error() { echo -e "${RED}[ERROR]${NC} $1"; FAILED=$((FAILED + 1)); }
 log_section() {
     echo ""
     echo -e "${CYAN}========================================${NC}"
@@ -55,654 +57,439 @@ log_section() {
     echo ""
 }
 
-# Check if running as root
-check_root() {
-    if [[ $EUID -ne 0 ]]; then
-        log_error "This script must be run as root (use sudo)"
-        exit 1
-    fi
+# ── Helpers ──────────────────────────────────────────────────────────────────
+command_exists() { command -v "$1" >/dev/null 2>&1; }
+
+python_pkg_installed() {
+    python3 -c "import $1" 2>/dev/null
 }
 
-# Detect OS and architecture
-detect_system() {
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        OS=$NAME
-        VER=$VERSION_ID
+get_pip_flags() {
+    # Check for externally-managed environment (Debian 12+, Ubuntu 23.04+)
+    if [ -f "/usr/lib/python3.11/EXTERNALLY-MANAGED" ] || \
+       [ -f "/usr/lib/python3.12/EXTERNALLY-MANAGED" ] || \
+       [ -f "/usr/lib/python3.13/EXTERNALLY-MANAGED" ]; then
+        echo "--break-system-packages"
     else
-        OS=$(uname -s)
-        VER=$(uname -r)
-    fi
-    
-    ARCH=$(uname -m)
-    case $ARCH in
-        x86_64) GO_ARCH="amd64" ;;
-        aarch64|arm64) GO_ARCH="arm64" ;;
-        i386|i686) GO_ARCH="386" ;;
-        *) GO_ARCH="amd64" ;;
-    esac
-    
-    log_info "Detected: $OS $VER ($ARCH)"
-    log_info "Go architecture: $GO_ARCH"
-}
-
-# Update package lists
-update_packages() {
-    log_info "Updating package lists..."
-    if command -v apt-get &> /dev/null; then
-        apt-get update -qq
-    elif command -v yum &> /dev/null; then
-        yum check-update || true
-    elif command -v pacman &> /dev/null; then
-        pacman -Sy
+        echo ""
     fi
 }
 
-# Install system dependencies
-install_dependencies() {
-    log_section "Installing System Dependencies"
+pip_install() {
+    local package=$1
+    local flags=$(get_pip_flags)
     
-    local packages="git curl wget python3 python3-pip python3-venv build-essential
-                    libpcap-dev libssl-dev zlib1g-dev libxml2-dev libxslt1-dev
-                    libffi-dev libsqlite3-dev libcurl4-openssl-dev libjpeg-dev
-                    libpng-dev pkg-config cmake unzip jq perl libnet-ssleay-perl
-                    libauthen-pam-perl libio-pty-perl apt-utils python3-tk
-                    chromium-browser chromium-chromedriver"
-    
-    if command -v apt-get &> /dev/null; then
-        apt-get install -y -qq $packages 2>/dev/null || apt-get install -y $packages
-    elif command -v yum &> /dev/null; then
-        yum groupinstall -y "Development Tools"
-        yum install -y ${packages//build-essential/"gcc gcc-c++ make"}
-    elif command -v pacman &> /dev/null; then
-        pacman -S --noconfirm base-devel git python python-pip cmake
-    fi
-    
-    log_success "System dependencies installed"
-}
-
-# Install Go from source
-install_go() {
-    log_section "Installing Go"
-    
-    if command -v go &> /dev/null; then
-        GO_CURRENT=$(go version | awk '{print $3}' | sed 's/go//')
-        log_info "Go $GO_CURRENT already installed"
-        export PATH=$PATH:$GO_INSTALL_DIR/go/bin:$HOME/go/bin
+    if python3 -m pip install --quiet $flags "$package" 2>/dev/null; then
         return 0
-    fi
-    
-    log_info "Downloading Go $GO_VERSION..."
-    cd /tmp
-    wget -q --show-progress "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
-    
-    log_info "Installing Go..."
-    rm -rf ${GO_INSTALL_DIR}/go
-    tar -C ${GO_INSTALL_DIR} -xzf "go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
-    rm "go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
-    
-    # Set up environment
-    export PATH=$PATH:$GO_INSTALL_DIR/go/bin:$HOME/go/bin
-    
-    # Make permanent
-    echo "export PATH=\$PATH:$GO_INSTALL_DIR/go/bin:\$HOME/go/bin" > /etc/profile.d/go.sh
-    chmod +x /etc/profile.d/go.sh
-    
-    # Verify
-    if command -v go &> /dev/null; then
-        log_success "Go $(go version | awk '{print $3}') installed"
     else
-        log_error "Go installation failed"
         return 1
     fi
 }
 
-# Clone or update a git repository
-git_clone_or_update() {
-    local repo_url=$1
-    local dest_dir=$2
-    local name=$(basename $dest_dir)
+# ── Initialization ───────────────────────────────────────────────────────────
+detect_system() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        log_info "Detected: $NAME $VERSION_ID ($ARCH)"
+    else
+        log_info "Detected: $(uname -s) $(uname -r) ($ARCH)"
+    fi
+}
+
+check_requirements() {
+    log_section "Checking Requirements"
+    local ok=true
+    for tool in git python3 pip3 curl wget; do
+        if command_exists "$tool"; then
+            log_success "$tool found"
+        else
+            log_error "$tool not found"
+            ok=false
+        fi
+    done
+    $ok || exit 1
+}
+
+update_packages() {
+    $IS_ROOT || return 0
+    log_info "Updating package lists..."
+    if command_exists apt-get; then
+        apt-get update -qq || true
+    elif command_exists yum; then
+        yum check-update || true
+    elif command_exists pacman; then
+        pacman -Sy
+    fi
+}
+
+# ── System Dependencies ──────────────────────────────────────────────────────
+install_system_deps() {
+    $IS_ROOT || { log_warning "Skipping system packages (requires sudo)"; return 0; }
     
-    if [ -d "$dest_dir/.git" ]; then
+    log_section "Installing System Dependencies"
+    local packages="git curl wget python3 python3-pip python3-venv build-essential
+    libpcap-dev libssl-dev zlib1g-dev libxml2-dev libxslt1-dev libffi-dev 
+    libsqlite3-dev libcurl4-openssl-dev libjpeg-dev libpng-dev pkg-config 
+    cmake unzip jq perl libnet-ssleay-perl libauthen-pam-perl libio-pty-perl 
+    apt-utils python3-tk chromium chromium-driver libjson-perl libxml-writer-perl"
+    
+    if command_exists apt-get; then
+        apt-get install -y -qq $packages 2>/dev/null || apt-get install -y $packages
+    elif command_exists yum; then
+        yum groupinstall -y "Development Tools"
+        yum install -y ${packages//build-essential/"gcc gcc-c++ make"}
+    elif command_exists pacman; then
+        pacman -S --noconfirm base-devel git python python-pip cmake
+    fi
+    log_success "System dependencies installed"
+}
+
+# ── Go Installation ─────────────────────────────────────────────────────────
+install_go() {
+    log_section "Installing Go"
+    
+    if command_exists go; then
+        local current=$(go version | awk '{print $3}' | sed 's/go//')
+        log_success "Go $current already installed"
+        export PATH="$PATH:$GO_INSTALL_DIR/go/bin:$HOME/go/bin"
+        return 0
+    fi
+    
+    $IS_ROOT || { log_error "Go requires sudo to install system-wide"; return 1; }
+    
+    log_info "Downloading Go $GO_VERSION..."
+    cd /tmp
+    wget -q --show-progress "https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
+    rm -rf "${GO_INSTALL_DIR}/go"
+    tar -C "${GO_INSTALL_DIR}" -xzf "go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
+    rm "go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
+    
+    export PATH="$PATH:$GO_INSTALL_DIR/go/bin:$HOME/go/bin"
+    echo "export PATH=\$PATH:$GO_INSTALL_DIR/go/bin:\$HOME/go/bin" > /etc/profile.d/go.sh
+    chmod +x /etc/profile.d/go.sh
+    
+    command_exists go && log_success "Go $(go version | awk '{print $3}') installed" || log_error "Go installation failed"
+}
+
+install_go_tool() {
+    local binary=$1
+    local src="$HOME/go/bin/$binary"
+    
+    if [ -f "$src" ]; then
+        cp "$src" "$INSTALL_DIR/" 2>/dev/null || {
+            mkdir -p "$INSTALL_DIR"
+            cp "$src" "$INSTALL_DIR/" 2>/dev/null || {
+                log_warning "Could not copy $binary to $INSTALL_DIR, using ~/go/bin/"
+                return 0
+            }
+        }
+        log_success "$binary installed"
+    else
+        log_error "$binary binary not found"
+    fi
+}
+
+install_go_tools() {
+    log_section "Installing Go-Based Tools"
+    export PATH="$PATH:$GO_INSTALL_DIR/go/bin:$HOME/go/bin"
+    
+    # Format: "url:name"
+    declare -A tools=(
+        ["github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"]="subfinder"
+        ["github.com/owasp-amass/amass/v4/...@master"]="amass"
+        ["github.com/tomnomnom/assetfinder@latest"]="assetfinder"
+        ["github.com/projectdiscovery/dnsx/cmd/dnsx@latest"]="dnsx"
+        ["github.com/projectdiscovery/httpx/cmd/httpx@latest"]="httpx"
+        ["github.com/projectdiscovery/katana/cmd/katana@latest"]="katana"
+        ["github.com/ffuf/ffuf@latest"]="ffuf"
+        ["github.com/hahwul/dalfox/v2@latest"]="dalfox"
+        ["github.com/tomnomnom/waybackurls@latest"]="waybackurls"
+        ["github.com/lc/gau/v2/cmd/gau@latest"]="gau"
+        ["github.com/jaeles-project/gospider@latest"]="gospider"
+        ["github.com/hakluke/hakrawler@latest"]="hakrawler"
+        ["github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"]="nuclei"
+        ["github.com/tomnomnom/gf@latest"]="gf"
+    )
+    
+    for url in "${!tools[@]}"; do
+        local name=${tools[$url]}
+        log_info "Installing $name..."
+        if go install -v "$url" 2>/dev/null; then
+            install_go_tool "$name"
+        else
+            log_error "$name installation failed"
+        fi
+    done
+    
+    # Nuclei templates
+    if command_exists nuclei; then
+        nuclei -update-templates 2>/dev/null || true
+    fi
+    
+    # GF patterns
+    if [ -f "$INSTALL_DIR/gf" ] || [ -f "$HOME/go/bin/gf" ]; then
+        mkdir -p ~/.gf
+        rm -rf /tmp/Gf-Patterns
+        git clone --depth 1 https://github.com/1ndianl33t/Gf-Patterns.git /tmp/Gf-Patterns 2>/dev/null || true
+        cp /tmp/Gf-Patterns/*.json ~/.gf/ 2>/dev/null || true
+        rm -rf /tmp/Gf-Patterns
+    fi
+}
+
+# ── Compiled Tools ──────────────────────────────────────────────────────────
+install_nmap() {
+    if command_exists nmap; then
+        log_warning "nmap already installed"
+        return
+    fi
+    $IS_ROOT || { log_warning "nmap requires sudo"; return; }
+    
+    if command_exists apt-get; then
+        apt-get install -y -qq nmap 2>/dev/null || apt-get install -y nmap
+    elif command_exists yum; then
+        yum install -y nmap
+    fi
+    command_exists nmap && log_success "nmap installed" || log_error "nmap failed"
+}
+
+install_masscan() {
+    if command_exists masscan; then
+        log_warning "masscan already installed"
+        return
+    fi
+    
+    log_info "Building masscan..."
+    rm -rf /tmp/masscan
+    git clone --depth 1 https://github.com/robertdavidgraham/masscan.git /tmp/masscan 2>/dev/null || {
+        log_error "Failed to clone masscan"
+        return
+    }
+    
+    cd /tmp/masscan
+    make -j$(nproc) 2>/dev/null || make
+    cp bin/masscan "$INSTALL_DIR/" 2>/dev/null || {
+        log_error "Failed to install masscan (permission?)"
+        return
+    }
+    rm -rf /tmp/masscan
+    log_success "masscan installed"
+}
+
+install_feroxbuster() {
+    if command_exists feroxbuster; then
+        log_warning "feroxbuster already installed"
+        return
+    fi
+    
+    cd /tmp
+    case $ARCH in
+        x86_64) local file="x86_64-linux-feroxbuster.tar.gz" ;;
+        aarch64|arm64) local file="aarch64-linux-feroxbuster.zip" ;;
+        *) log_error "Unsupported arch for feroxbuster: $ARCH"; return ;;
+    esac
+    
+    log_info "Downloading feroxbuster..."
+    curl -fsSL "https://github.com/epi052/feroxbuster/releases/latest/download/${file}" -o "$file" 2>/dev/null || {
+        log_error "Failed to download feroxbuster"
+        return
+    }
+    
+    if [[ "$file" == *.tar.gz ]]; then
+        tar xzf "$file"
+    else
+        unzip -o "$file"
+    fi
+    
+    chmod +x feroxbuster
+    mv feroxbuster "$INSTALL_DIR/" 2>/dev/null || {
+        log_error "Failed to install feroxbuster"
+        rm -f "$file" feroxbuster
+        return
+    }
+    rm -f "$file"
+    log_success "feroxbuster installed"
+}
+
+install_x8() {
+    if command_exists x8; then
+        log_warning "x8 already installed"
+        return
+    fi
+    
+    cd /tmp
+    case $ARCH in
+        x86_64) local arch="x86_64" ;;
+        aarch64) local arch="aarch64" ;;
+        *) log_error "Unsupported arch for x8: $ARCH"; return ;;
+    esac
+    
+    log_info "Fetching x8 release..."
+    local tag=$(curl -s "https://api.github.com/repos/Sh1Yo/x8/releases/latest" | grep -o '"tag_name": "[^"]*"' | cut -d'"' -f4)
+    [ -z "$tag" ] && { log_error "Could not get x8 version"; return; }
+    
+    local file="${arch}-linux-x8.gz"
+    curl -fsSL "https://github.com/Sh1Yo/x8/releases/download/${tag}/${file}" -o "$file" 2>/dev/null || {
+        log_error "Failed to download x8"
+        return
+    }
+    
+    gunzip -f "$file"
+    local bin="${arch}-linux-x8"
+    [ -f "$bin" ] || bin="x8"
+    
+    chmod +x "$bin"
+    mv "$bin" "$INSTALL_DIR/x8" 2>/dev/null || {
+        log_error "Failed to install x8"
+        return
+    }
+    log_success "x8 installed"
+}
+
+install_compiled_tools() {
+    log_section "Installing Compiled Tools"
+    install_nmap
+    install_masscan
+    install_feroxbuster
+    install_x8
+}
+
+# ── Git-Based Tools ─────────────────────────────────────────────────────────
+git_clone_or_update() {
+    local repo=$1
+    local dest=$2
+    local name=$(basename "$dest")
+    
+    if [ -d "$dest/.git" ]; then
         log_info "Updating $name..."
-        cd "$dest_dir"
-        git pull --depth 1
+        cd "$dest" && git pull --depth 1 2>/dev/null || true
     else
         log_info "Cloning $name..."
-        rm -rf "$dest_dir"
-        git clone --depth 1 "$repo_url" "$dest_dir"
+        rm -rf "$dest"
+        git clone --depth 1 "$repo" "$dest" 2>/dev/null || {
+            log_error "Failed to clone $name"
+            return 1
+        }
     fi
 }
 
-# ==================== GO-BASED TOOLS ====================
-
-install_subfinder() {
-    log_info "Installing subfinder..."
-    go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
-    if [ -f "$HOME/go/bin/subfinder" ]; then
-        cp "$HOME/go/bin/subfinder" "$INSTALL_DIR/"
-        log_success "subfinder installed"
-    else
-        log_error "subfinder installation failed"
-    fi
+create_wrapper() {
+    local name=$1
+    local cmd=$2
+    local file="$INSTALL_DIR/$name"
+    
+    echo "#!/bin/bash" > "$file"
+    echo "$cmd \"\$@\"" >> "$file"
+    chmod +x "$file"
 }
-
-install_amass() {
-    log_info "Installing amass..."
-    go install -v github.com/owasp-amass/amass/v4/...@master
-    if [ -f "$HOME/go/bin/amass" ]; then
-        cp "$HOME/go/bin/amass" "$INSTALL_DIR/"
-        log_success "amass installed"
-    else
-        log_error "amass installation failed"
-    fi
-}
-
-install_assetfinder() {
-    log_info "Installing assetfinder..."
-    go install -v github.com/tomnomnom/assetfinder@latest
-    if [ -f "$HOME/go/bin/assetfinder" ]; then
-        cp "$HOME/go/bin/assetfinder" "$INSTALL_DIR/"
-        log_success "assetfinder installed"
-    else
-        log_error "assetfinder installation failed"
-    fi
-}
-
-install_dnsx() {
-    log_info "Installing dnsx..."
-    go install -v github.com/projectdiscovery/dnsx/cmd/dnsx@latest
-    if [ -f "$HOME/go/bin/dnsx" ]; then
-        cp "$HOME/go/bin/dnsx" "$INSTALL_DIR/"
-        log_success "dnsx installed"
-    else
-        log_error "dnsx installation failed"
-    fi
-}
-
-install_httpx() {
-    log_info "Installing httpx..."
-    go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest
-    if [ -f "$HOME/go/bin/httpx" ]; then
-        cp "$HOME/go/bin/httpx" "$INSTALL_DIR/"
-        log_success "httpx installed"
-    else
-        log_error "httpx installation failed"
-    fi
-}
-
-install_katana() {
-    log_info "Installing katana..."
-    go install -v github.com/projectdiscovery/katana/cmd/katana@latest
-    if [ -f "$HOME/go/bin/katana" ]; then
-        cp "$HOME/go/bin/katana" "$INSTALL_DIR/"
-        log_success "katana installed"
-    else
-        log_error "katana installation failed"
-    fi
-}
-
-install_ffuf() {
-    log_info "Installing ffuf..."
-    go install -v github.com/ffuf/ffuf@latest
-    if [ -f "$HOME/go/bin/ffuf" ]; then
-        cp "$HOME/go/bin/ffuf" "$INSTALL_DIR/"
-        log_success "ffuf installed"
-    else
-        log_error "ffuf installation failed"
-    fi
-}
-
-install_dalfox() {
-    log_info "Installing dalfox..."
-    go install -v github.com/hahwul/dalfox/v2@latest
-    if [ -f "$HOME/go/bin/dalfox" ]; then
-        cp "$HOME/go/bin/dalfox" "$INSTALL_DIR/"
-        log_success "dalfox installed"
-    else
-        log_error "dalfox installation failed"
-    fi
-}
-
-install_gf() {
-    log_info "Installing gf..."
-    go install -v github.com/tomnomnom/gf@latest
-    if [ -f "$HOME/go/bin/gf" ]; then
-        cp "$HOME/go/bin/gf" "$INSTALL_DIR/"
-        
-        # Install gf patterns
-        mkdir -p ~/.gf
-        cd /tmp
-        rm -rf Gf-Patterns
-        git clone --depth 1 https://github.com/1ndianl33t/Gf-Patterns
-        cp Gf-Patterns/*.json ~/.gf/ 2>/dev/null || true
-        rm -rf Gf-Patterns
-        
-        log_success "gf installed"
-    else
-        log_error "gf installation failed"
-    fi
-}
-
-install_waybackurls() {
-    log_info "Installing waybackurls..."
-    go install -v github.com/tomnomnom/waybackurls@latest
-    if [ -f "$HOME/go/bin/waybackurls" ]; then
-        cp "$HOME/go/bin/waybackurls" "$INSTALL_DIR/"
-        log_success "waybackurls installed"
-    else
-        log_error "waybackurls installation failed"
-    fi
-}
-
-install_gau() {
-    log_info "Installing gau..."
-    go install -v github.com/lc/gau/v2/cmd/gau@latest
-    if [ -f "$HOME/go/bin/gau" ]; then
-        cp "$HOME/go/bin/gau" "$INSTALL_DIR/"
-        log_success "gau installed"
-    else
-        log_error "gau installation failed"
-    fi
-}
-
-install_gospider() {
-    log_info "Installing gospider..."
-    go install -v github.com/jaeles-project/gospider@latest
-    if [ -f "$HOME/go/bin/gospider" ]; then
-        cp "$HOME/go/bin/gospider" "$INSTALL_DIR/"
-        log_success "gospider installed"
-    else
-        log_error "gospider installation failed"
-    fi
-}
-
-install_hakrawler() {
-    log_info "Installing hakrawler..."
-    go install -v github.com/hakluke/hakrawler@latest
-    if [ -f "$HOME/go/bin/hakrawler" ]; then
-        cp "$HOME/go/bin/hakrawler" "$INSTALL_DIR/"
-        log_success "hakrawler installed"
-    else
-        log_error "hakrawler installation failed"
-    fi
-}
-
-install_nuclei() {
-    log_info "Installing nuclei..."
-    go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
-    if [ -f "$HOME/go/bin/nuclei" ]; then
-        cp "$HOME/go/bin/nuclei" "$INSTALL_DIR/"
-        
-        # Download nuclei templates
-        log_info "Downloading nuclei templates..."
-        nuclei -update-templates 2>/dev/null || true
-        
-        log_success "nuclei installed"
-    else
-        log_error "nuclei installation failed"
-    fi
-}
-
-# ==================== PYTHON-BASED TOOLS ====================
-
-install_arjun() {
-    log_info "Installing arjun..."
-    pip3 install --quiet --upgrade arjun
-    if command -v arjun &> /dev/null; then
-        log_success "arjun installed"
-    else
-        log_error "arjun installation failed"
-    fi
-}
-
-install_ghauri() {
-    log_info "Installing ghauri..."
-    pip3 install --quiet --upgrade ghauri
-    if command -v ghauri &> /dev/null; then
-        log_success "ghauri installed"
-    else
-        log_error "ghauri installation failed"
-    fi
-}
-
-install_trufflehog() {
-    log_info "Installing trufflehog..."
-    curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b $INSTALL_DIR
-    if command -v trufflehog &> /dev/null; then
-        log_success "trufflehog installed"
-    else
-        log_error "trufflehog installation failed"
-    fi
-}
-
-# ==================== GIT-BASED TOOLS ====================
 
 install_sqlmap() {
-    log_info "Installing sqlmap..."
     git_clone_or_update "https://github.com/sqlmapproject/sqlmap.git" "$OPT_DIR/sqlmap"
-    
-    cat > "$INSTALL_DIR/sqlmap" << 'EOF'
-#!/bin/bash
-python3 /opt/sqlmap/sqlmap.py "$@"
-EOF
-    chmod +x "$INSTALL_DIR/sqlmap"
+    create_wrapper "sqlmap" "python3 $OPT_DIR/sqlmap/sqlmap.py"
     log_success "sqlmap installed"
 }
 
 install_paramspider() {
-    log_info "Installing paramspider..."
     git_clone_or_update "https://github.com/devanshbatham/ParamSpider.git" "$OPT_DIR/ParamSpider"
-    
     cd "$OPT_DIR/ParamSpider"
-    pip3 install --quiet -e . 2>/dev/null || pip3 install --quiet -r requirements.txt
+    pip3 install -e . 2>/dev/null || pip_install "-r requirements.txt" || true
     
     cat > "$INSTALL_DIR/paramspider" << 'EOF'
 #!/bin/bash
-cd /opt/ParamSpider && python3 paramspider.py "$@"
+cd /opt/ParamSpider && python3 -m paramspider "$@"
 EOF
     chmod +x "$INSTALL_DIR/paramspider"
     log_success "paramspider installed"
 }
 
 install_secretfinder() {
-    log_info "Installing secretfinder..."
     git_clone_or_update "https://github.com/m4ll0k/SecretFinder.git" "$OPT_DIR/SecretFinder"
-    
     cd "$OPT_DIR/SecretFinder"
-    pip3 install --quiet -r requirements.txt 2>/dev/null || true
-    
-    cat > "$INSTALL_DIR/secretfinder" << 'EOF'
-#!/bin/bash
-python3 /opt/SecretFinder/SecretFinder.py "$@"
-EOF
-    chmod +x "$INSTALL_DIR/secretfinder"
+    pip_install "-r requirements.txt" || true
+    create_wrapper "secretfinder" "python3 $OPT_DIR/SecretFinder/SecretFinder.py"
     log_success "secretfinder installed"
 }
 
 install_wafw00f() {
-    log_info "Installing wafw00f..."
     git_clone_or_update "https://github.com/EnableSecurity/wafw00f.git" "$OPT_DIR/wafw00f"
-    
     cd "$OPT_DIR/wafw00f"
-    python3 setup.py install --quiet 2>/dev/null || pip3 install --quiet .
+    pip3 install -r requirements.txt 2>/dev/null || pip_install "-r requirements.txt" || true
     
-    ln -sf "$OPT_DIR/wafw00f/wafw00f.py" "$INSTALL_DIR/wafw00f"
+    cat > "$INSTALL_DIR/wafw00f" << 'EOF'
+#!/bin/bash
+cd /opt/wafw00f && python3 -W ignore ./wafw00f.py "$@"
+EOF
     chmod +x "$INSTALL_DIR/wafw00f"
     log_success "wafw00f installed"
 }
 
 install_nikto() {
-    log_info "Installing nikto..."
     git_clone_or_update "https://github.com/sullo/nikto.git" "$OPT_DIR/nikto"
-    
-    cat > "$INSTALL_DIR/nikto" << 'EOF'
-#!/bin/bash
-perl /opt/nikto/program/nikto.pl "$@"
-EOF
-    chmod +x "$INSTALL_DIR/nikto"
+    create_wrapper "nikto" "perl $OPT_DIR/nikto/program/nikto.pl"
     log_success "nikto installed"
 }
 
 install_linkfinder() {
-    log_info "Installing linkfinder..."
     git_clone_or_update "https://github.com/GerbenJavado/LinkFinder.git" "$OPT_DIR/LinkFinder"
-    
     cd "$OPT_DIR/LinkFinder"
-    pip3 install --quiet -r requirements.txt 2>/dev/null || true
-    
-    cat > "$INSTALL_DIR/linkfinder" << 'EOF'
-#!/bin/bash
-python3 /opt/LinkFinder/linkfinder.py "$@"
-EOF
-    chmod +x "$INSTALL_DIR/linkfinder"
+    pip_install "-r requirements.txt" || true
+    create_wrapper "linkfinder" "python3 $OPT_DIR/LinkFinder/linkfinder.py"
     log_success "linkfinder installed"
 }
 
 install_xsstrike() {
-    log_info "Installing xsstrike..."
     git_clone_or_update "https://github.com/s0md3v/XSStrike.git" "$OPT_DIR/XSStrike"
-    
     cd "$OPT_DIR/XSStrike"
-    pip3 install --quiet -r requirements.txt 2>/dev/null || true
-    
-    cat > "$INSTALL_DIR/xsstrike" << 'EOF'
-#!/bin/bash
-python3 /opt/XSStrike/xsstrike.py "$@"
-EOF
-    chmod +x "$INSTALL_DIR/xsstrike"
+    pip_install "-r requirements.txt" || true
+    create_wrapper "xsstrike" "python3 $OPT_DIR/XSStrike/xsstrike.py"
     log_success "xsstrike installed"
 }
 
-install_ssrfire() {
-    log_info "Installing ssrfire..."
-    git_clone_or_update "https://github.com/0xInfection/ssrfire.git" "$OPT_DIR/ssrfire"
-    
-    chmod +x "$OPT_DIR/ssrfire/ssrfire.sh"
-    
-    cat > "$INSTALL_DIR/ssrfire" << 'EOF'
-#!/bin/bash
-cd /opt/ssrfire && bash ssrfire.sh "$@"
-EOF
-    chmod +x "$INSTALL_DIR/ssrfire"
-    log_success "ssrfire installed"
-}
-
 install_jwt_tool() {
-    log_info "Installing jwt-tool..."
     git_clone_or_update "https://github.com/ticarpi/jwt_tool.git" "$OPT_DIR/jwt_tool"
-    
     cd "$OPT_DIR/jwt_tool"
-    pip3 install --quiet -r requirements.txt 2>/dev/null || true
-    
-    cat > "$INSTALL_DIR/jwt-tool" << 'EOF'
-#!/bin/bash
-python3 /opt/jwt_tool/jwt_tool.py "$@"
-EOF
-    chmod +x "$INSTALL_DIR/jwt-tool"
+    pip_install "-r requirements.txt" || true
+    create_wrapper "jwt-tool" "python3 $OPT_DIR/jwt_tool/jwt_tool.py"
     log_success "jwt-tool installed"
 }
 
-install_gitdorker() {
-    log_info "Installing gitdorker..."
-    git_clone_or_update "https://github.com/obheda12/GitDorker.git" "$OPT_DIR/GitDorker"
+install_ghauri() {
+    git_clone_or_update "https://github.com/r0oth3x49/ghauri.git" "$OPT_DIR/ghauri"
+    cd "$OPT_DIR/ghauri"
+    pip3 install -q --upgrade setuptools 2>/dev/null || true
+    pip_install "-r requirements.txt" || true
+    pip_install "'urllib3<2.0' 'charset-normalizer<3.0'" || true
     
+    cat > "$INSTALL_DIR/ghauri" << 'EOF'
+#!/bin/bash
+export PYTHONWARNINGS="ignore"
+export PYTHONDONTWRITEBYTECODE=1
+python3 -W ignore -c "
+import sys
+sys.path.insert(0, '/opt/ghauri')
+from ghauri.scripts.ghauri import main
+if __name__ == '__main__':
+    main()
+" "$@"
+EOF
+    chmod +x "$INSTALL_DIR/ghauri"
+    log_success "ghauri installed"
+}
+
+install_gitdorker() {
+    git_clone_or_update "https://github.com/obheda12/GitDorker.git" "$OPT_DIR/GitDorker"
     cd "$OPT_DIR/GitDorker"
-    pip3 install --quiet -r requirements.txt 2>/dev/null || true
+    pip_install "-r requirements.txt" || true
     
     cat > "$INSTALL_DIR/gitdorker" << 'EOF'
 #!/bin/bash
-python3 /opt/GitDorker/GitDorker.py "$@"
+python3 -W ignore /opt/GitDorker/GitDorker.py "$@"
 EOF
     chmod +x "$INSTALL_DIR/gitdorker"
     log_success "gitdorker installed"
 }
 
-# ==================== COMPILED TOOLS ====================
-
-install_masscan() {
-    log_info "Installing masscan..."
-    
-    if command -v masscan &> /dev/null; then
-        log_warning "masscan already installed via package manager"
-        return 0
-    fi
-    
-    git_clone_or_update "https://github.com/robertdavidgraham/masscan.git" "$OPT_DIR/masscan"
-    
-    cd "$OPT_DIR/masscan"
-    make -j$(nproc) 2>/dev/null || make
-    
-    cp bin/masscan "$INSTALL_DIR/"
-    log_success "masscan installed"
-}
-
-install_nmap() {
-    log_info "Installing nmap..."
-    
-    if command -v nmap &> /dev/null; then
-        log_warning "nmap already installed"
-        return 0
-    fi
-    
-    if command -v apt-get &> /dev/null; then
-        apt-get install -y -qq nmap
-    elif command -v yum &> /dev/null; then
-        yum install -y nmap
-    elif command -v pacman &> /dev/null; then
-        pacman -S --noconfirm nmap
-    fi
-    
-    log_success "nmap installed"
-}
-
-install_feroxbuster() {
-    log_info "Installing feroxbuster..."
-    
-    if command -v feroxbuster &> /dev/null; then
-        log_warning "feroxbuster already installed"
-        return 0
-    fi
-    
-    cd /tmp
-    case $ARCH in
-        x86_64) FEROX_ARCH="x86_64-linux-musl" ;;
-        aarch64) FEROX_ARCH="aarch64-linux-musl" ;;
-        *) 
-            log_warning "Architecture $ARCH not supported for feroxbuster"
-            return 1
-            ;;
-    esac
-    
-    FEROX_URL="https://github.com/epi052/feroxbuster/releases/latest/download/feroxbuster-${FEROX_ARCH}.tar.gz"
-    curl -sL "$FEROX_URL" | tar xz
-    mv feroxbuster "$INSTALL_DIR/"
-    
-    log_success "feroxbuster installed"
-}
-
-install_x8() {
-    log_info "Installing x8..."
-    
-    if command -v x8 &> /dev/null; then
-        log_warning "x8 already installed"
-        return 0
-    fi
-    
-    cd /tmp
-    case $ARCH in
-        x86_64) X8_ARCH="x86_64" ;;
-        aarch64) X8_ARCH="aarch64" ;;
-        *) 
-            log_warning "Architecture $ARCH not supported for x8"
-            return 1
-            ;;
-    esac
-    
-    X8_URL="https://github.com/Sh1Yo/x8/releases/latest/download/x8_linux.tar.gz"
-    curl -sL "$X8_URL" | tar xz
-    mv x8 "$INSTALL_DIR/"
-    
-    log_success "x8 installed"
-}
-
-# ==================== WORDLISTS ====================
-
-install_wordlists() {
-    log_section "Installing Wordlists"
-    
-    mkdir -p "$WORDLIST_DIR"
-    
-    # SecLists
-    if [ ! -d "$WORDLIST_DIR/SecLists" ]; then
-        log_info "Cloning SecLists..."
-        git clone --depth 1 https://github.com/danielmiessler/SecLists.git "$WORDLIST_DIR/SecLists"
-        log_success "SecLists installed"
-    else
-        log_info "Updating SecLists..."
-        cd "$WORDLIST_DIR/SecLists"
-        git pull --depth 1
-        log_success "SecLists updated"
-    fi
-    
-    # PayloadsAllTheThings
-    if [ ! -d "$WORDLIST_DIR/PayloadsAllTheThings" ]; then
-        log_info "Cloning PayloadsAllTheThings..."
-        git clone --depth 1 https://github.com/swisskyrepo/PayloadsAllTheThings.git "$WORDLIST_DIR/PayloadsAllTheThings"
-        log_success "PayloadsAllTheThings installed"
-    fi
-}
-
-# ==================== MAIN ====================
-
-print_banner() {
-    echo -e "${GREEN}"
-    echo "    ____                      __   __"
-    echo "   |  _ \ ___  ___ ___  _ __ / /\ / /"
-    echo "   | |_) / _ \/ __/ _ \| '_ \\ \/  \/ /"
-    echo "   |  _ <  __/ (_| (_) | | | ) \  / /"
-    echo "   |_| \_\___|\___\___/|_| |_\/  \/"
-    echo ""
-    echo "   Penetration Testing Tools Setup"
-    echo -e "${NC}"
-}
-
-print_summary() {
-    log_section "Installation Summary"
-    
-    echo -e "Successfully installed: ${GREEN}$INSTALLED${NC}"
-    echo -e "Skipped (already exists): ${YELLOW}$SKIPPED${NC}"
-    echo -e "Failed: ${RED}$FAILED${NC}"
-    echo ""
-    
-    echo "Installed tools location: $INSTALL_DIR"
-    echo "Git-based tools location: $OPT_DIR"
-    echo "Wordlists location: $WORDLIST_DIR"
-    echo ""
-    
-    echo "To use the tools:"
-    echo "  1. Open a new terminal, or run: source /etc/profile.d/go.sh"
-    echo "  2. Verify: which subfinder nuclei sqlmap"
-    echo ""
-    echo "Next steps for reconx:"
-    echo "  1. cd /path/to/reconx"
-    echo "  2. pip3 install -r requirements.txt"
-    echo "  3. python3 main.py init"
-    echo "  4. Edit config.yaml"
-    echo "  5. python3 main.py run --target example.com"
-    echo ""
-}
-
-install_all_go_tools() {
-    log_section "Installing Go-Based Tools"
-    
-    install_subfinder
-    install_amass
-    install_assetfinder
-    install_dnsx
-    install_httpx
-    install_katana
-    install_ffuf
-    install_dalfox
-    install_gf
-    install_waybackurls
-    install_gau
-    install_gospider
-    install_hakrawler
-    install_nuclei
-}
-
-install_all_python_tools() {
-    log_section "Installing Python-Based Tools"
-    
-    install_arjun
-    install_ghauri
-    install_trufflehog
-}
-
-install_all_git_tools() {
+install_git_tools() {
     log_section "Installing Git-Based Tools"
-    
     install_sqlmap
     install_paramspider
     install_secretfinder
@@ -710,73 +497,115 @@ install_all_git_tools() {
     install_nikto
     install_linkfinder
     install_xsstrike
-    install_ssrfire
     install_jwt_tool
+    install_ghauri
     install_gitdorker
 }
 
-install_all_compiled_tools() {
-    log_section "Installing Compiled Tools"
+# ── Python Tools ────────────────────────────────────────────────────────────
+install_python_deps() {
+    log_section "Installing Python Dependencies"
     
-    install_nmap
-    install_masscan
-    install_feroxbuster
-    install_x8
+    # Upgrade pip first
+    pip_install "--upgrade pip" || true
+    
+    local deps=(
+        "termcolor:termcolor"
+        "jsbeautifier:jsbeautifier"
+        "pycryptodomex:Cryptodome"
+        "lxml:lxml"
+        "requests:requests"
+        "colorama:colorama"
+    )
+    
+    for item in "${deps[@]}"; do
+        local pkg=${item%%:*}
+        local mod=${item##*:}
+        
+        if python_pkg_installed "$mod"; then
+            log_warning "$pkg already installed"
+        else
+            log_info "Installing $pkg..."
+            pip_install "$pkg" && log_success "$pkg installed" || log_error "$pkg failed"
+        fi
+    done
+}
+
+install_arjun() {
+    log_section "Installing Arjun"
+    if command_exists arjun; then
+        log_warning "arjun already installed"
+        return
+    fi
+    log_info "Installing arjun..."
+    pip_install "arjun" && log_success "arjun installed" || log_error "arjun failed"
+}
+
+# ── Wordlists ───────────────────────────────────────────────────────────────
+install_wordlists() {
+    log_section "Installing Wordlists"
+    mkdir -p "$WORDLIST_DIR"
+    
+    if [ -d "$WORDLIST_DIR/SecLists/.git" ]; then
+        cd "$WORDLIST_DIR/SecLists" && git pull --depth 1 2>/dev/null || true
+        log_success "SecLists updated"
+    else
+        git clone --depth 1 https://github.com/danielmiessler/SecLists.git "$WORDLIST_DIR/SecLists" 2>/dev/null && \
+            log_success "SecLists installed" || log_warning "SecLists clone failed"
+    fi
+    
+    if [ ! -d "$WORDLIST_DIR/PayloadsAllTheThings" ]; then
+        git clone --depth 1 https://github.com/swisskyrepo/PayloadsAllTheThings.git "$WORDLIST_DIR/PayloadsAllTheThings" 2>/dev/null && \
+            log_success "PayloadsAllTheThings installed" || log_warning "PayloadsAllTheThings clone failed"
+    fi
+}
+
+# ── Main ────────────────────────────────────────────────────────────────────
+print_banner() {
+    echo -e "${GREEN}"
+    echo '    ____                      __   __'
+    echo '   |  _ \ ___  ___ ___  _ __ / /\ / /'
+    echo '   | |_) / _ \/ __/ _ \| '"'\\'"'_ \ \/  \/ /'
+    echo '   |  _ <  __/ (_| (_) | | | ) \  / /'
+    echo '   |_| \_\___|\___\___/|_| |_\/  \/'
+    echo ''
+    echo '   Unified Tools Setup Script'
+    echo '   https://github.com/maskface02/Reconx'
+    echo -e "${NC}"
+    echo ""
+}
+
+print_summary() {
+    log_section "Installation Summary"
+    echo -e "Installed: ${GREEN}$INSTALLED${NC}"
+    echo -e "Skipped: ${YELLOW}$SKIPPED${NC}"
+    echo -e "Failed: ${RED}$FAILED${NC}"
+    echo ""
+    
+    if ! $IS_ROOT; then
+        echo "Add to your ~/.bashrc or ~/.zshrc:"
+        echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
+        echo "  export PATH=\"\$HOME/go/bin:\$PATH\""
+        echo ""
+    fi
+    
+    [ -f /etc/profile.d/go.sh ] && echo "Run: source /etc/profile.d/go.sh"
 }
 
 main() {
     print_banner
-    
-    check_root
+    check_requirements
     detect_system
-    
     update_packages
-    install_dependencies
+    install_system_deps
     install_go
-    
-    install_all_go_tools
-    install_all_python_tools
-    install_all_git_tools
-    install_all_compiled_tools
+    install_go_tools
+    install_compiled_tools
+    install_git_tools
+    install_python_deps
+    install_arjun
     install_wordlists
-    
     print_summary
 }
 
-# Handle command line arguments
-case "${1:-}" in
-    --go)
-        check_root
-        detect_system
-        install_go
-        install_all_go_tools
-        ;;
-    --python)
-        check_root
-        install_all_python_tools
-        ;;
-    --git)
-        check_root
-        install_dependencies
-        install_all_git_tools
-        ;;
-    --wordlists)
-        install_wordlists
-        ;;
-    --help|-h)
-        echo "Usage: $0 [OPTION]"
-        echo ""
-        echo "Options:"
-        echo "  --go         Install only Go-based tools"
-        echo "  --python     Install only Python-based tools"
-        echo "  --git        Install only Git-based tools"
-        echo "  --wordlists  Install only wordlists"
-        echo "  --help       Show this help message"
-        echo ""
-        echo "Without options, installs all tools."
-        exit 0
-        ;;
-    *)
-        main
-        ;;
-esac
+main "$@"
