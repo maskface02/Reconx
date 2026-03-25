@@ -69,7 +69,12 @@ python_pkg_installed() {
     python3 -c "import $1" 2>/dev/null
 }
 
+is_arch_based() {
+    [[ "$PKG_MANAGER" == "pacman" ]]
+}
+
 get_pip_flags() {
+    # Check for externally-managed environment (Debian 12+, Ubuntu 23.04+, Arch)
     if [ -f "/usr/lib/python3.11/EXTERNALLY-MANAGED" ] || \
        [ -f "/usr/lib/python3.12/EXTERNALLY-MANAGED" ] || \
        [ -f "/usr/lib/python3.13/EXTERNALLY-MANAGED" ]; then
@@ -79,10 +84,38 @@ get_pip_flags() {
     fi
 }
 
+# Updated pip_install with Arch Linux pacman fallback
 pip_install() {
     local package=$1
     local flags=$(get_pip_flags)
-    python3 -m pip install --quiet $flags "$package" 2>/dev/null
+    
+    # Try pip install first
+    if python3 -m pip install --quiet $flags "$package" 2>/dev/null; then
+        return 0
+    fi
+    
+    # If pip fails on Arch, try pacman for common python packages
+    if is_arch_based && $IS_ROOT; then
+        local pacman_pkg=""
+        case "$package" in
+            termcolor) pacman_pkg="python-termcolor" ;;
+            jsbeautifier) pacman_pkg="python-jsbeautifier" ;;
+            pycryptodomex) pacman_pkg="python-pycryptodomex" ;;
+            lxml) pacman_pkg="python-lxml" ;;
+            requests) pacman_pkg="python-requests" ;;
+            colorama) pacman_pkg="python-colorama" ;;
+            arjun) pacman_pkg="arjun" ;;
+        esac
+        
+        if [ -n "$pacman_pkg" ]; then
+            log_info "Trying pacman for $pacman_pkg..."
+            if pacman -S --noconfirm --needed "$pacman_pkg" 2>/dev/null; then
+                return 0
+            fi
+        fi
+    fi
+    
+    return 1
 }
 
 # ── Package Manager Detection ───────────────────────────────────────────────
@@ -93,8 +126,8 @@ detect_pkg_manager() {
         PKG_INSTALL="apt-get install -y -qq"
     elif command_exists pacman; then
         PKG_MANAGER="pacman"
-        PKG_UPDATE="pacman -Sy"
-        PKG_INSTALL="pacman -S --noconfirm"
+        PKG_UPDATE="pacman -Sy --noconfirm"
+        PKG_INSTALL="pacman -S --noconfirm --needed"
     elif command_exists dnf; then
         PKG_MANAGER="dnf"
         PKG_UPDATE="dnf check-update || true"
@@ -170,7 +203,7 @@ check_requirements() {
     detect_pkg_manager
     if [ -n "$PKG_MANAGER" ]; then
         log_info "Package manager detected: $PKG_MANAGER"
-        log_info "Updating package lists..."
+        log_info "Updating package database..."
         $PKG_UPDATE 2>/dev/null || true
     else
         log_warning "No standard package manager found"
@@ -205,7 +238,6 @@ detect_system() {
     local os_version="unknown"
     
     if [ -f /etc/os-release ]; then
-        # Read vars safely, providing defaults if missing
         while IFS='=' read -r key value; do
             case "$key" in
                 NAME) os_name="${value//\"/}" ;;
@@ -213,7 +245,6 @@ detect_system() {
             esac
         done < /etc/os-release
         
-        # Arch and other rolling distros don't have VERSION_ID
         if [ -z "$os_version" ] || [ "$os_version" = "unknown" ]; then
             os_version="rolling"
         fi
@@ -347,21 +378,18 @@ install_nmap() {
         return
     fi
     
-    $IS_ROOT || { 
-        log_warning "nmap requires sudo"
-        return
-    }
+    $IS_ROOT || { log_warning "nmap requires sudo"; return; }
     
     log_info "Installing nmap..."
     
     case $PKG_MANAGER in
         pacman)
-            # Arch: Try normal install first, fallback to overwrite on lua conflicts
-            if pacman -S --noconfirm nmap 2>/dev/null; then
+            # Arch: Handle file conflicts (lua package conflicts)
+            if pacman -S --noconfirm --needed nmap 2>/dev/null; then
                 log_success "nmap installed"
             else
-                log_warning "Retrying with overwrite flag (handling lua package conflict)..."
-                pacman -S --noconfirm --overwrite '*' nmap 2>/dev/null && \
+                log_warning "Retrying with overwrite flag (handling lua conflicts)..."
+                pacman -S --noconfirm --needed --overwrite '*' nmap 2>/dev/null && \
                     log_success "nmap installed (conflicts resolved)" || \
                     log_error "nmap installation failed"
             fi
@@ -637,7 +665,17 @@ install_git_tools() {
 install_python_deps() {
     log_section "Installing Python Dependencies"
     
+    # Upgrade pip first
     pip_install "--upgrade pip" || true
+    
+    # Arch-specific: Install via pacman where available for cleaner system integration
+    if is_arch_based && $IS_ROOT; then
+        log_info "Arch detected: Using pacman for Python packages..."
+        local arch_python_pkgs="python-termcolor python-jsbeautifier python-pycryptodomex python-lxml python-requests python-colorama"
+        pacman -S --noconfirm --needed $arch_python_pkgs 2>/dev/null && \
+            log_success "Python packages installed via pacman" || \
+            log_warning "Some packages not in repos, falling back to pip..."
+    fi
     
     local deps=(
         "termcolor:termcolor"
@@ -667,7 +705,16 @@ install_arjun() {
         log_warning "arjun already installed"
         return
     fi
-    log_info "Installing arjun..."
+    
+    # Try pacman first on Arch (arjun is available in BlackArch/community)
+    if is_arch_based && $IS_ROOT; then
+        if pacman -S --noconfirm --needed arjun 2>/dev/null; then
+            log_success "arjun installed via pacman"
+            return
+        fi
+    fi
+    
+    log_info "Installing arjun via pip..."
     pip_install "arjun" && log_success "arjun installed" || log_error "arjun failed"
 }
 
