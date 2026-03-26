@@ -727,14 +727,16 @@ install_arjun() {
         fi
     fi
     
-    # Install arjun via pipx
+    # Install arjun via pipx (use user's directory even with sudo)
     log_info "Installing arjun via pipx..."
-    if pipx install arjun 2>/dev/null; then
+    if PIPX_HOME="/home/$SUDO_USER/.local/share/pipx" \
+       PIPX_BIN_DIR="/home/$SUDO_USER/.local/bin" \
+       pipx install arjun 2>/dev/null; then
         log_success "arjun installed via pipx"
         
         # Create symlink in INSTALL_DIR if it's not in PATH
-        if [ ! -f "$INSTALL_DIR/arjun" ] && [ -f "$HOME/.local/bin/arjun" ]; then
-            ln -sf "$HOME/.local/bin/arjun" "$INSTALL_DIR/arjun" 2>/dev/null || true
+        if [ ! -f "$INSTALL_DIR/arjun" ] && [ -f "/home/$SUDO_USER/.local/bin/arjun" ]; then
+            ln -sf "/home/$SUDO_USER/.local/bin/arjun" "$INSTALL_DIR/arjun" 2>/dev/null || true
         fi
     else
         log_error "arjun installation via pipx failed"
