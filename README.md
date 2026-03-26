@@ -63,201 +63,40 @@ vim config.yaml
 python3 main.py run --target example.com --config config.yaml
 ```
 
-## 📋 CLI Commands Reference
+## 📋 Usage Examples
 
-### Global Options
+### Run Specific Phase
 ```bash
-python3 main.py --version    # Show version
-python3 main.py --help       # Show help
+python3 main.py run --target example.com --phase 1  # Discovery only
 ```
 
----
-
-### 1. `init` - Initialize Configuration
-Create a `config.yaml` template file in the current directory.
-
+### Resume from Phase
 ```bash
-python3 main.py init
+python3 main.py run --target example.com --from-phase 3
 ```
 
-**Output:** `config.yaml` template ready for editing
-
----
-
-### 2. `run` - Execute Pipeline
-Run the reconnaissance pipeline (full or partial).
-
+### Manual Review
 ```bash
-python3 main.py run --target <domain> [OPTIONS]
+python3 main.py review --target example.com
 ```
 
-**Required Arguments:**
-| Argument | Description |
-|----------|-------------|
-| `--target`, `-t` | Target domain to scan |
-
-**Optional Arguments:**
-| Option | Short | Description | Default |
-|--------|-------|-------------|---------|
-| `--config` | `-c` | Configuration file path | `config.yaml` |
-| `--phase` | `-p` | Run specific phase only (1-6) | None (run all) |
-| `--from-phase` | | Start from this phase | 1 |
-| `--to-phase` | | Stop at this phase | 6 |
-| `--force` | `-f` | Force re-run (ignore cached output) | False |
-| `--verbose` | `-v` | Enable verbose logging | False |
-
-**Examples:**
+### Generate Report
 ```bash
-# Run full pipeline
-python3 main.py run --target apple.com --config config.yaml
-
-# Run specific phase only
-python3 main.py run --target apple.com --phase 1
-python3 main.py run --target apple.com --phase 5
-
-# Run range of phases
-python3 main.py run --target apple.com --from-phase 3 --to-phase 5
-
-# Force re-run (ignore cache)
-python3 main.py run --target apple.com --force
-
-# Verbose output
-python3 main.py run --target apple.com --verbose
-
-# Shorthand
-python3 main.py run -t apple.com -c config.yaml -f -v
+python3 main.py report --target example.com --format html --output report.html
 ```
 
----
+## 🔧 Configuration
 
-### 3. `review` - Manual Review TUI
-Open interactive terminal UI for reviewing medium-confidence findings.
-
-```bash
-python3 main.py review --target <domain>
+Minimal `config.yaml`:
+```yaml
+target: example.com
+scope: []                  # Accept all (or specify ["*.example.com"])
+exclude: []
+rate_limit: 50
+threads: 20
+timeout: 10
+tools: {}
 ```
-
-**Required Arguments:**
-| Argument | Description |
-|----------|-------------|
-| `--target`, `-t` | Target domain to review |
-
-**Actions in TUI:**
-- `[C]` Confirm → Move to `confirmed_findings.json`
-- `[R]` Reject → Move to `dropped_findings.json`
-- `[S]` Skip → Keep in queue for later
-- `[P]` Previous → Go back to previous finding
-- `[Q]` Quit → Save progress and exit
-
-**Example:**
-```bash
-python3 main.py review --target apple.com
-python3 main.py review -t apple.com
-```
-
-**After review, continue with:**
-```bash
-python3 main.py run --target apple.com --from-phase 6
-```
-
----
-
-### 4. `report` - Generate Reports
-Generate findings reports in various formats.
-
-```bash
-python3 main.py report --target <domain> [OPTIONS]
-```
-
-**Required Arguments:**
-| Argument | Description |
-|----------|-------------|
-| `--target`, `-t` | Target domain for report |
-
-**Optional Arguments:**
-| Option | Short | Description | Default |
-|--------|-------|-------------|---------|
-| `--format` | `-f` | Output format: `json`, `html`, `markdown` | `markdown` |
-| `--output` | `-o` | Output file path | Auto-generated |
-
-**Examples:**
-```bash
-# Markdown report (default)
-python3 main.py report --target apple.com
-python3 main.py report --target apple.com --format markdown --output report.md
-
-# HTML report
-python3 main.py report --target apple.com --format html --output report.html
-
-# JSON export
-python3 main.py report --target apple.com --format json --output report.json
-
-# Shorthand
-python3 main.py report -t apple.com -f html -o report.html
-```
-
-**Generated Files:**
-- `reconx_report_{target}.md` (Markdown)
-- `reconx_report_{target}.html` (HTML)
-- `reconx_report_{target}.json` (JSON)
-
----
-
-### 5. `status` - Workspace Status
-Show workspace status and progress.
-
-```bash
-python3 main.py status [OPTIONS]
-```
-
-**Optional Arguments:**
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--target` | `-t` | Specific target to check |
-
-**Examples:**
-```bash
-# Show all workspaces
-python3 main.py status
-
-# Show specific target
-python3 main.py status --target apple.com
-python3 main.py status -t apple.com
-```
-
-**Displays:**
-- Target domain
-- Phases completed (e.g., `5/6`)
-- Confirmed findings count
-- Review queue size
-- Exploit results count
-
----
-
-### 6. `clear` - Clear Workspace
-Delete all workspace data for a target (requires confirmation).
-
-```bash
-python3 main.py clear --target <domain>
-```
-
-**Required Arguments:**
-| Argument | Description |
-|----------|-------------|
-| `--target`, `-t` | Target domain to clear |
-
-**Example:**
-```bash
-python3 main.py clear --target apple.com
-```
-
-**⚠️ Warning:** This permanently deletes all data for the target including:
-- All phase outputs
-- Findings and reports
-- Raw tool outputs
-- Logs and exploit artifacts
-
----
 
 ## 📊 Output Structure
 
@@ -276,19 +115,6 @@ workspaces/
     ├── raw/                        # Tool raw outputs
     ├── logs/                       # Execution logs
     └── exploits/                   # Exploitation artifacts
-```
-
-## 🔧 Configuration
-
-Minimal `config.yaml`:
-```yaml
-target: example.com
-scope: []                  # Accept all (or specify ["*.example.com"])
-exclude: []
-rate_limit: 50
-threads: 20
-timeout: 10
-tools: {}
 ```
 
 ## 🧠 False Positive Filter
@@ -311,14 +137,10 @@ Intelligent scoring system:
 
 ## 📚 Documentation
 
-- [Configuration Guide](docs/config_guide.md) - Setup and configuration
-- [Tools Reference](docs/tools_reference.md) - All tools, commands, and flags
-- [FP Filter Logic](docs/fp_filter_guide.md) - False positive filtering explained
-- [Architecture](docs/ARCHITECTURE.md) - System design and data flow
-
-## 🤝 Contributing
-
-Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+- [Configuration Guide](reconx-docs/reconx_config_guide.md) - Setup and configuration
+- [Tools Reference](reconx-docs/reconx_tools_reference.md) - All tools, commands, and flags
+- [FP Filter Logic](reconx-docs/reconx_fp_filter_guide.md) - False positive filtering explained
+- [Architecture](reconx-docs/ARCHITECTURE.md) - System design and data flow
 
 ## ⚠️ Disclaimer
 
