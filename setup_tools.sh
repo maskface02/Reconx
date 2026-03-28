@@ -159,7 +159,7 @@ install_sys_deps() {
       libcurl4-openssl-dev libjpeg-dev libpng-dev pkg-config cmake \
       unzip bzip2 jq perl wget curl git \
       python3 python3-pip python3-venv pipx \
-      libcap2-bin upx-ucl
+      libcap2-bin upx-ucl libjson-perl libxml-writer-perl
     ;;
 
   arch)
@@ -173,8 +173,8 @@ install_sys_deps() {
     pacman -S --noconfirm --needed \
       base-devel libpcap openssl zlib libxml2 libxslt libffi sqlite \
       curl libjpeg-turbo libpng pkgconf cmake unzip bzip2 jq perl wget git \
-      python python-pip python-pipx libcap upx
-    ;;
+      python python-pip python-pipx libcap upx libjson-perl libxml-writer-perl
+      ;;
 
   *)
     err "Unsupported distro. Only Debian/Ubuntu and Arch are supported."
