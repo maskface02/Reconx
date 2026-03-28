@@ -173,7 +173,7 @@ install_sys_deps() {
     pacman -S --noconfirm --needed \
       base-devel libpcap openssl zlib libxml2 libxslt libffi sqlite \
       curl libjpeg-turbo libpng pkgconf cmake unzip bzip2 jq perl wget git \
-      python python-pip python-pipx libcap upx libjson-perl libxml-writer-perl
+      python python-pip python-pipx libcap upx perl-json perl-xml-writer
       ;;
 
   *)
