@@ -16,7 +16,6 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 # ── Variables ────────────────────────────────────────────────────────────────
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DRY_RUN=false
 
 # ── Paths ──────────────────────────────────────────────────────────────────
@@ -24,6 +23,15 @@ USER_BIN="$HOME/.local/bin"
 GIT_TOOLS_DIR="$HOME/.local/opt"
 WORDLISTS_DIR="$HOME/.local/share/wordlists"
 GO_DIR="$HOME/.local/go"
+
+# ── Tool List ────────────────────────────────────────────────────────────────
+declare -a TOOLS=(
+    "subfinder" "amass" "assetfinder" "dnsx" "httpx" "katana"
+    "ffuf" "dalfox" "waybackurls" "gospider" "hakrawler"
+    "nuclei" "masscan" "feroxbuster" "x8"
+    "sqlmap" "ghauri" "gitdorker" "paramspider" "nikto"
+    "wafw00f" "linkfinder" "xsstrike" "jwt-tool" "secretfinder"
+)
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -89,8 +97,8 @@ show_help() {
     echo "  $0 [OPTIONS]"
     echo ""
     echo -e "${BOLD}OPTIONS:${NC}"
-    echo "  --full        Remove everything (tools, wordlists, aliases)"
-    echo "  --tools       Remove tools only (keep wordlists)"
+    echo "  --full        Remove everything (tools, wordlists, Go)"
+    echo "  --tools       Remove tools only (keep wordlists, Go)"
     echo "  --wordlists   Remove wordlists only [all|seclists|payloads]"
     echo "  --dry-run     Preview only (show what would be removed)"
     echo "  --help        Show this help message"
@@ -100,8 +108,6 @@ show_help() {
     echo "  Git Tools:    ~/.local/opt/ (sqlmap, nikto, xsstrike, etc.)"
     echo "  Wordlists:    ~/.local/share/wordlists/"
     echo "  Go:           ~/.local/go/"
-    echo "  Aliases:      gau, gf"
-    echo "  Symlinks:     Broken symlinks in ~/.local/bin/"
     echo ""
     echo -e "${BOLD}EXAMPLES:${NC}"
     echo "  $0 --full                     # Remove everything"
@@ -131,16 +137,9 @@ list_installed() {
     
     # Tools in ~/.local/bin
     echo -e "${BOLD}Tools in $USER_BIN/:${NC}"
-    local tools=(
-        "subfinder" "amass" "assetfinder" "dnsx" "httpx" "katana"
-        "ffuf" "dalfox" "waybackurls" "gospider" "hakrawler"
-        "nuclei" "masscan" "feroxbuster" "x8"
-        "sqlmap" "ghauri" "gitdorker" "paramspider" "nikto"
-        "wafw00f" "linkfinder" "xsstrike" "jwt-tool" "secretfinder"
-    )
     local tools_found=false
     local tools_size=0
-    for tool in "${tools[@]}"; do
+    for tool in "${TOOLS[@]}"; do
         if [ -f "$USER_BIN/$tool" ]; then
             echo "  - $tool"
             tools_found=true
@@ -199,19 +198,14 @@ list_installed() {
     fi
     echo ""
     
-    # Shell aliases
-    echo -e "${BOLD}Shell Aliases:${NC}"
-    local aliases_found=false
-    if alias gau &>/dev/null; then
-        echo "  - gau"
-        aliases_found=true
-    fi
-    if alias gf &>/dev/null; then
-        echo "  - gf"
-        aliases_found=true
-    fi
-    if [ "$aliases_found" = false ]; then
-        echo "  (none found)"
+    # Go Runtime
+    echo -e "${BOLD}Go in $GO_DIR/:${NC}"
+    if [ -d "$GO_DIR" ]; then
+        local go_size=$(get_size "$GO_DIR")
+        echo "  - Go ($go_size)"
+        total_size=$((total_size + $(get_size_bytes "$GO_DIR")))
+    else
+        echo "  (not found)"
     fi
     echo ""
     
@@ -234,7 +228,7 @@ show_warning() {
     echo "  - Tools from $USER_BIN/"
     [ -d "$GIT_TOOLS_DIR" ] && echo "  - Git tools from $GIT_TOOLS_DIR/"
     [ -d "$WORDLISTS_DIR" ] && echo "  - Wordlists ($WORDLISTS_DIR/)"
-    echo "  - Shell aliases (gau, gf)"
+    [ -d "$GO_DIR" ] && echo "  - Go ($GO_DIR/)"
     
     echo ""
     echo -e "${YELLOW}Are you sure you want to continue?${NC}"
@@ -253,16 +247,8 @@ remove_tools() {
     echo ""
     log_info "Removing tools from $USER_BIN..."
     
-    local tools=(
-        "subfinder" "amass" "assetfinder" "dnsx" "httpx" "katana"
-        "ffuf" "dalfox" "waybackurls" "gospider" "hakrawler"
-        "nuclei" "masscan" "feroxbuster" "x8"
-        "sqlmap" "ghauri" "gitdorker" "paramspider" "nikto"
-        "wafw00f" "linkfinder" "xsstrike" "jwt-tool" "secretfinder"
-    )
-    
     local removed_count=0
-    for tool in "${tools[@]}"; do
+    for tool in "${TOOLS[@]}"; do
         if [ -f "$USER_BIN/$tool" ] || [ -L "$USER_BIN/$tool" ]; then
             if [ "$DRY_RUN" = true ]; then
                 print_dry_run "$USER_BIN/$tool"
@@ -279,21 +265,6 @@ remove_tools() {
     elif [ "$DRY_RUN" = false ]; then
         log_success "Removed $removed_count tools"
     fi
-    
-    log_info "Removing shell aliases..."
-    local alias_removed=0
-    for alias_name in "gau" "gf"; do
-        if alias "$alias_name" &>/dev/null; then
-            if [ "$DRY_RUN" = true ]; then
-                print_dry_run "alias $alias_name"
-            else
-                unalias "$alias_name" 2>/dev/null || true
-                echo "  Removed alias: $alias_name"
-                alias_removed=$((alias_removed + 1))
-            fi
-        fi
-    done
-    [ "$DRY_RUN" = false ] && [ $alias_removed -gt 0 ] && log_success "Removed $alias_removed aliases"
 }
 
 remove_git_tools() {
@@ -384,32 +355,6 @@ remove_wordlists() {
     esac
 }
 
-remove_broken_symlinks() {
-    echo ""
-    log_info "Removing broken symlinks..."
-    
-    local removed_count=0
-    
-    while IFS= read -r link; do
-        local basename_link=$(basename "$link")
-        if [ -L "$link" ] && [ ! -e "$link" ]; then
-            if [ "$DRY_RUN" = true ]; then
-                print_dry_run "$link (broken)"
-            else
-                rm -f "$link"
-                echo "  Removed: $basename_link (broken symlink)"
-                removed_count=$((removed_count + 1))
-            fi
-        fi
-    done < <(find "$USER_BIN" -maxdepth 1 -type l 2>/dev/null)
-    
-    if [ "$removed_count" -eq 0 ]; then
-        log_skip "No broken symlinks found"
-    elif [ "$DRY_RUN" = false ]; then
-        log_success "Removed $removed_count broken symlinks"
-    fi
-}
-
 remove_go() {
     echo ""
     log_info "Removing Go from $GO_DIR..."
@@ -448,7 +393,6 @@ main() {
             remove_git_tools
             remove_wordlists
             remove_go
-            remove_broken_symlinks
             ;;
         --tools)
             show_warning
@@ -457,7 +401,6 @@ main() {
             log_info "Removing tools only..."
             remove_tools
             remove_git_tools
-            remove_broken_symlinks
             ;;
         --wordlists)
             show_warning
