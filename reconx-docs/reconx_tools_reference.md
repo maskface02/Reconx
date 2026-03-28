@@ -886,9 +886,7 @@ https://api.other.com/data
 | Protocol-relative | `//cdn.com/assets` | `https://site.com/js/app.js` | `https://cdn.com/assets` | Add scheme |
 | Absolute path | `/api/users` | `https://site.com/js/app.js` | `https://site.com/api/users` | urljoin with base |
 | Relative path | `api/users` | `https://site.com/js/app.js` | `https://site.com/js/api/users` | urljoin with JS dir |
-| Relative parent | `../api/users` | `https://site.com/js/app.js` | `https://site.com/api/users` | Resolved by urljoin |
-
-**Output File:** `workspaces/{target}/raw/linkfinder_endpoints.txt`
+| Relative parent | `../api/users` | `https://site.com/js/app.js` | `https://site.com/api/users` | Resolved by urljoin |**Output File:** `workspaces/{target}/raw/linkfinder_endpoints.txt`
 
 **Key Points:**
 - Output is captured from **stdout** (not saved to file by linkfinder itself)
@@ -1481,7 +1479,6 @@ for url in base_urls[:5]:
 2. **ghauri** - Alternative SQLi tool
 3. **dalfox** - XSS exploitation
 4. **xsstrike** - Alternative XSS tool
-5. **ssrfire** - SSRF exploitation
 6. **jwt-tool** - JWT manipulation
 7. **ffuf** - LFI/IDOR fuzzing
 8. **nuclei** - CVE exploitation
@@ -1615,10 +1612,10 @@ cmd = [
 
 **Command:**
 ```bash
-xsstrike -u {url} --params
 ```
+```xsstrike -u "{url}" --params```
 
-**Example:**
+*Example:**
 ```python
 cmd = [
     self.get_tool_path('xsstrike'),
@@ -1632,40 +1629,7 @@ cmd = [
 
 ---
 
-### 5. ssrfire
-
-**Purpose:** SSRF exploitation with callback server
-
-**Command:**
-```bash
-ssrfire -u {url} -p {param} --callback {interactsh_server}
-```
-
-**Flags:**
-- `-u {url}`: Target URL
-- `-p {param}`: Parameter to inject
-- `--callback {server}`: Interact.sh callback server
-
-**Example:**
-```python
-if self.interactsh_server:
-    output_file = self.workspace.exploits_path / f"ssrf_{finding.id}.txt"
-
-    cmd = [
-        self.get_tool_path('ssrfire'),
-        '-u', finding.url,
-        '-p', finding.param or 'url',
-        '--callback', self.interactsh_server
-    ]
-
-    # Actual execution:
-    # ssrfire -u https://api.apple.com/fetch -p url \
-    #         --callback your-interactsh-server.com
-```
-
----
-
-### 6. jwt-tool
+### 5. jwt-tool
 
 **Purpose:** JWT token manipulation and auth bypass
 
@@ -1701,7 +1665,7 @@ if jwt_token:
 
 ---
 
-### 7. ffuf (LFI Exploitation)
+### 6. ffuf (LFI Exploitation)
 
 **Purpose:** LFI payload fuzzing
 
@@ -1743,7 +1707,7 @@ cmd = [
 
 ---
 
-### 8. nuclei (CVE Exploitation)
+### 7. nuclei (CVE Exploitation)
 
 **Purpose:** Exploit specific CVEs with templates
 
@@ -1843,7 +1807,6 @@ tools:
   nikto: /usr/local/bin/nikto
   linkfinder: /usr/local/bin/linkfinder
   xsstrike: /usr/local/bin/xsstrike
-  ssrfire: /usr/local/bin/ssrfire
   jwt_tool: /usr/local/bin/jwt-tool
   gitdorker: /usr/local/bin/gitdorker
 
@@ -1899,7 +1862,6 @@ threads: 20       # Parallel operations
 | 5 | nikto | `-h -Format json -o` | JSON |
 | 6 | sqlmap | `-u -p --dbs --batch --output-dir` | JSON/Dir |
 | 6 | dalfox | `url --param --waf-evasion --output` | File |
-| 6 | ssrfire | `-u -p --callback` | File |
 | 6 | jwt_tool | `-t -rh -M` | stdout |
 | 6 | ffuf | `-u -w -mc -o` | JSON |
 | 6 | nuclei | `-u -t -json -o` | JSON |

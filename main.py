@@ -267,7 +267,6 @@ tools:
   linkfinder: linkfinder
   x8: x8
   xsstrike: xsstrike
-  ssrfire: ssrfire
   jwt_tool: jwt-tool
   gitdorker: gitdorker
   ghauri: ghauri

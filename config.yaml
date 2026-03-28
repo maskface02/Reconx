@@ -13,9 +13,9 @@ exclude: []
   # - "out-of-scope.example.com"
 
 # Rate limiting
-rate_limit: 50          # requests per second globally
+rate_limit: 50        # requests per second globally
 threads: 20
-timeout: 10             # seconds per request
+timeout: 10           # seconds per request
 
 # Wordlists
 wordlist_dirs: /usr/share/seclists/Discovery/Web-Content/
@@ -49,7 +49,6 @@ tools:
   linkfinder: linkfinder
   x8: x8
   xsstrike: xsstrike
-  ssrfire: ssrfire
   jwt_tool: jwt-tool
   gitdorker: gitdorker
   ghauri: ghauri

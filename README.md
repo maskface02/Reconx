@@ -1,6 +1,6 @@
 # 🔍 reconx - Modular Penetration Testing Framework
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Asyncio](https://img.shields.io/badge/asyncio-supported-green.svg)](https://docs.python.org/3/library/asyncio.html)
 
@@ -31,7 +31,7 @@ Phase 5: Scanning      → nuclei, secretfinder, trufflehog, nikto
     ↓
 FP Filter              → Scoring engine routes findings
     ↓
-Phase 6: Exploitation  → sqlmap, dalfox, ssrfire, jwt-tool
+Phase 6: Exploitation  → sqlmap, dalfox, jwt-tool
 ```
 
 ## 🚀 Quick Start
@@ -133,7 +133,7 @@ Intelligent scoring system:
 - **Crawling**: katana, gospider, hakrawler, waybackurls, gau, linkfinder
 - **Enumeration**: ffuf, feroxbuster, paramspider, arjun, x8, gf
 - **Scanning**: nuclei, secretfinder, trufflehog, nikto
-- **Exploitation**: sqlmap, ghauri, dalfox, xsstrike, ssrfire, jwt-tool
+- **Exploitation**: sqlmap, ghauri, dalfox, xsstrike, jwt-tool
 
 ## 📚 Documentation
 
@@ -152,7 +152,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
 
-<p align="center">
+<p align="">
   <b>Made with ❤️ for the security community</b><br>
   <i>Automate the boring, focus on the critical</i>
 </p>
