@@ -21,6 +21,7 @@ GIT_TOOLS_DIR="$HOME/.local/opt"
 WORDLISTS_DIR="$HOME/.local/share/wordlists"
 GO_DIR="$HOME/.local/go"
 GO_CACHE_DIR="$HOME/.local/go_cache"
+ARJUN_PIPX_DIR="$HOME/.local/share/pipx/arjun"
 
 # ── Tool List ────────────────────────────────────────────────────────────────
 declare -a TOOLS=(
@@ -29,7 +30,7 @@ declare -a TOOLS=(
     "nuclei" "masscan" "feroxbuster" "x8" "gf" "gau"
     "sqlmap" "ghauri" "gitdorker" "paramspider" "nikto"
     "wafw00f" "linkfinder" "xsstrike" "jwt-tool" "secretfinder"
-    "ncat" "nmap" "nping"
+    "ncat" "nmap" "nping" "arjun"
 )
 
 # ── Git Tools List ──────────────────────────────────────────────────────────
@@ -100,6 +101,7 @@ show_warning() {
     [[ -d "$WORDLISTS_DIR" ]] && echo "  - Wordlists ($WORDLISTS_DIR/)"
     [[ -d "$GO_DIR" ]] && echo "  - Go ($GO_DIR/)"
     [[ -d "$GO_CACHE_DIR" ]] && echo "  - Go cache ($GO_CACHE_DIR/)"
+    [[ -d "$ARJUN_PIPX_DIR" ]] && echo "  - Arjun pipx ($ARJUN_PIPX_DIR/)"
     
     echo ""
     echo -e "${YELLOW}Are you sure you want to continue?${NC}"
@@ -200,6 +202,12 @@ remove_go_cache() {
     fi
 }
 
+remove_arjun_pipx() {
+    echo ""
+    log_info "Removing Arjun pipx package from $ARJUN_PIPX_DIR..."
+    safe_remove "$ARJUN_PIPX_DIR" "Arjun (pipx)"
+}
+
 # ── Main ────────────────────────────────────────────────────────────────────
 main() {
     show_banner
@@ -213,6 +221,7 @@ main() {
     remove_wordlists
     remove_go
     remove_go_cache
+    remove_arjun_pipx
     
     echo ""
     echo -e "${GREEN}Uninstall complete!${NC}"
