@@ -626,8 +626,10 @@ show_summary() {
   echo -e "  Total size: ${CYAN}${total_size}${NC}"
   echo ""
 
-  echo -e "${BOLD}Complete cleanup command:${NC}"
-  echo -e "  ${YELLOW}rm -rf ~/.local/bin ~/.local/opt ~/.local/go ~/.local/go_cache ~/.local/share/nmap ~/.local/share/wordlists ~/.local/lib/nmap ~/.gf${NC}"
+  echo -e "${BOLD}To uninstall, run:${NC}"
+  echo -e "  ${YELLOW}./uninstall.sh${NC}"
+  echo ""
+  echo "  (The script will prompt for sudo password when needed for go_cache)"
   echo ""
 
   echo -e "${BOLD}Activate PATH in your current shell:${NC}"
