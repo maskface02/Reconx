@@ -40,7 +40,7 @@ Phase 6: Exploitation  → sqlmap, dalfox, jwt-tool
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/reconx.git
+git clone https://github.com/maskface02/reconx.git
 cd reconx
 
 # Install Python dependencies
