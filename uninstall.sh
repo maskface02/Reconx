@@ -3,7 +3,7 @@
 # ReconX Uninstall Script
 # Removes all installed tools, wordlists, and dependencies
 #
-
+clear
 set -euo pipefail
 
 # ── Colors ───────────────────────────────────────────────────────────────────
@@ -30,7 +30,7 @@ declare -a TOOLS=(
     "nuclei" "masscan" "feroxbuster" "x8" "gf" "gau"
     "sqlmap" "ghauri" "gitdorker" "paramspider" "nikto"
     "wafw00f" "linkfinder" "xsstrike" "jwt-tool" "secretfinder"
-    "ncat" "nmap" "nping" "arjun"
+    "ncat" "nmap" "nping" "arjun" "trufflehog"
 )
 
 # ── Git Tools List ──────────────────────────────────────────────────────────
@@ -65,13 +65,21 @@ safe_remove() {
         return 0
     fi
     
+    # Try normal removal first
     if rm -rf "$path" 2>/dev/null; then
         log_success "Removed $description"
         return 0
-    else
-        log_warning "Failed to remove $description"
-        return 1
     fi
+    
+    # Try with sudo as fallback
+    log_warning "Permission denied, trying with sudo..."
+    if sudo rm -rf "$path" 2>/dev/null; then
+        log_success "Removed $description with sudo"
+        return 0
+    fi
+    
+    log_warning "Failed to remove $description"
+    return 1
 }
 
 # ── Banner ───────────────────────────────────────────────────────────────────
@@ -96,7 +104,7 @@ show_warning() {
     echo ""
     echo "This will remove:"
     echo ""
-    echo "  - Tools from $USER_BIN/"
+    [[ -d "$USER_BIN" ]] && echo "  - Tools from $USER_BIN/"
     [[ -d "$GIT_TOOLS_DIR" ]] && echo "  - Git tools from $GIT_TOOLS_DIR/"
     [[ -d "$WORDLISTS_DIR" ]] && echo "  - Wordlists ($WORDLISTS_DIR/)"
     [[ -d "$GO_DIR" ]] && echo "  - Go ($GO_DIR/)"
@@ -120,44 +128,61 @@ remove_tools() {
     echo ""
     log_info "Removing tools from $USER_BIN..."
     
+    if [[ ! -d "$USER_BIN" ]]; then
+        log_skip "Tools directory not found: $USER_BIN"
+        return 0
+    fi
+    
     local removed_count=0
-    local skipped_count=0
+    local failed_count=0
+    local not_found_count=0
     
     for tool in "${TOOLS[@]}"; do
         local tool_path="$USER_BIN/$tool"
         
         if [[ -f "$tool_path" || -L "$tool_path" ]]; then
-            rm -f "$tool_path"
-            echo "  Removed: $tool"
-            removed_count=$((removed_count + 1))
+            if rm -f "$tool_path" 2>/dev/null; then
+                echo "  Removed: $tool"
+                removed_count=$((removed_count + 1))
+            else
+                # Try with sudo
+                if sudo rm -f "$tool_path" 2>/dev/null; then
+                    echo "  Removed: $tool (with sudo)"
+                    removed_count=$((removed_count + 1))
+                else
+                    echo "  Failed: $tool"
+                    failed_count=$((failed_count + 1))
+                fi
+            fi
         else
-            echo "  Skipped: $tool"
-            skipped_count=$((skipped_count + 1))
+            not_found_count=$((not_found_count + 1))
         fi
     done
     
     echo ""
-    log_info "Removed: $removed_count | Skipped: $skipped_count"
+    log_info "Removed: $removed_count | Failed: $failed_count | Not Found: $not_found_count"
 }
 
 remove_git_tools() {
     echo ""
     log_info "Removing Git-based tools from $GIT_TOOLS_DIR..."
     
+    if [[ ! -d "$GIT_TOOLS_DIR" ]]; then
+        log_skip "Git tools directory not found"
+        return 0
+    fi
+    
     local removed_count=0
     
     for dir in "${GIT_TOOL_DIRS[@]}"; do
         local full_path="$GIT_TOOLS_DIR/$dir"
-        
-        if [[ -d "$full_path" ]]; then
-            local size
-            size=$(du -sh "$full_path" 2>/dev/null | cut -f1)
-            if safe_remove "$full_path" "$dir"; then
-                echo "  Removed: $dir ($size)"
-                removed_count=$((removed_count + 1))
-            fi
-        fi
+        safe_remove "$full_path" "$dir" && removed_count=$((removed_count + 1))
     done
+    
+    # Remove the opt directory itself if empty
+    if [[ -d "$GIT_TOOLS_DIR" && -z "$(ls -A "$GIT_TOOLS_DIR" 2>/dev/null)" ]]; then
+        safe_remove "$GIT_TOOLS_DIR" "empty opt directory"
+    fi
     
     if [[ $removed_count -eq 0 ]]; then
         log_skip "No Git tools found"
@@ -187,24 +212,12 @@ remove_go_cache() {
         return 0
     fi
     
-    if [[ -z "$GO_CACHE_DIR" || "$GO_CACHE_DIR" == "/" ]]; then
-        log_warning "Invalid path, refusing to delete"
-        return 1
-    fi
-    
-    log_warning "This requires sudo privileges..."
-    
-    if sudo rm -rf "$GO_CACHE_DIR" 2>/dev/null; then
-        log_success "Removed Go cache"
-    else
-        log_warning "Some files could not be removed (permission denied)"
-        return 1
-    fi
+    safe_remove "$GO_CACHE_DIR" "Go cache"
 }
 
 remove_arjun_pipx() {
     echo ""
-    log_info "Removing Arjun pipx package from $ARJUN_PIPX_DIR..."
+    log_info "Removing Arjun pipx package..."
     safe_remove "$ARJUN_PIPX_DIR" "Arjun (pipx)"
 }
 
@@ -224,7 +237,7 @@ main() {
     remove_arjun_pipx
     
     echo ""
-    echo -e "${GREEN}Uninstall complete!${NC}"
+    log_success "Uninstall complete!"
 }
 
 main "$@"
