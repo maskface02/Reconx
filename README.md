@@ -98,8 +98,6 @@ python3 main.py report --format html --output report.html
 # Show status for config's target
 python3 main.py status
 
-# List all workspaces (no config needed)
-python3 main.py status
 ```
 
 ### Clear Workspace
@@ -176,10 +174,6 @@ Intelligent scoring system:
 ## ⚠️ Disclaimer
 
 **For authorized security testing only.** Always obtain proper authorization before testing any system you do not own.
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
 
