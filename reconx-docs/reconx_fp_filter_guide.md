@@ -484,7 +484,7 @@ def differs_from_baseline(url, response_snippet, baseline):
 When a finding scores **20-49** (Medium Confidence):
 
 1. **Saved to:** `workspaces/{target}/review_queue.json`
-2. **User launches:** `python3 main.py review --target example.com`
+2. **User launches:** `python3 main.py review`
 3. **TUI displays:**
    - Finding details (URL, param, evidence, request/response)
    - Score breakdown (which signals triggered)
@@ -495,7 +495,7 @@ When a finding scores **20-49** (Medium Confidence):
    - **[R] Reject:** Moves to `dropped_findings.json`, permanently excluded
    - **[S] Skip:** Stays in queue for later review
 
-5. **After review:** Run `python3 main.py run --target example.com --from-phase 6` to exploit confirmed findings.
+5. **After review:** Run `python3 main.py run --from-phase 6` to exploit confirmed findings.
 
 ---
 

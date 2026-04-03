@@ -11,7 +11,9 @@ from typing import Optional
 import click
 import yaml
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 from rich import box
 
 # Ensure core modules are importable
@@ -25,6 +27,26 @@ from reports.generator import ReportGenerator
 
 
 console = Console()
+
+
+def show_banner(console_obj: Console):
+    """Display the R3c0nX banner from banner.txt in green."""
+    banner_path = Path(__file__).parent / "banner.txt"
+    if banner_path.exists():
+        banner_text = banner_path.read_text()
+        console_obj.print(f"[bold green]{banner_text}[/bold green]")
+    else:
+        console_obj.print("[bold green]R3c0nX[/bold green]")
+
+    console_obj.print(
+        Panel(
+            "[bold green]R3c0nX[/bold green] — [dim]Unified Reconnaissance Framework[/dim]\n"
+            "[dim]https://github.com/maskface02/reconx[/dim]",
+            border_style="green",
+            padding=(0, 2),
+        )
+    )
+    console_obj.print("")
 
 
 def load_config(config_path: str) -> dict:
@@ -42,7 +64,6 @@ def cli():
 
 
 @cli.command()
-@click.option('--target', '-t', required=True, help='Target domain')
 @click.option('--config', '-c', default='config.yaml', help='Configuration file path')
 @click.option('--phase', '-p', type=int, help='Run specific phase only (1-6)')
 @click.option('--from-phase', type=int, default=1, help='Start from this phase')
@@ -50,7 +71,6 @@ def cli():
 @click.option('--force', '-f', is_flag=True, help='Force re-run even if output exists')
 @click.option('--verbose', '-v', is_flag=True, help='Enable verbose output')
 def run(
-    target: str,
     config: str,
     phase: Optional[int],
     from_phase: int,
@@ -59,34 +79,63 @@ def run(
     verbose: bool
 ):
     """Run the reconnaissance pipeline."""
+    # Display banner
+    show_banner(console)
+
     # Load configuration
     try:
         cfg = load_config(config)
-        cfg['target'] = target  # Override target from CLI
     except FileNotFoundError:
         console.print(f"[red]Configuration file not found: {config}[/red]")
-        console.print("[yellow]Using default configuration[/yellow]")
-        cfg = {
-            'target': target,
-            'scope': [f"*.{target}", target],
-            'exclude': [],
-            'rate_limit': 50,
-            'threads': 20,
-            'timeout': 10,
-            'tools': {}
-        }
+        console.print("[yellow]Run 'reconx init' to create a config template[/yellow]")
+        sys.exit(1)
     except yaml.YAMLError as e:
         console.print(f"[red]Error parsing configuration: {e}[/red]")
         sys.exit(1)
-    
+
+    # Validate target
+    target = cfg.get('target')
+    if not target:
+        console.print("[red]No 'target' specified in config file.[/red]")
+        sys.exit(1)
+
+    # Build config summary
+    rate_limit = cfg.get('rate_limit', 50)
+    threads = cfg.get('threads', 20)
+    scope = cfg.get('scope', [])
+    exclude = cfg.get('exclude', [])
+    chaos_set = bool(cfg.get('chaos_api_key'))
+    github_set = bool(cfg.get('github_token'))
+
+    summary = Table.grid(padding=(0, 2))
+    summary.add_column("Key", style="bold cyan")
+    summary.add_column("Value", style="bold white")
+    summary.add_row("Target", target)
+    summary.add_row("Scope", ", ".join(scope) if scope else "[dim]* (all)[/dim]")
+    summary.add_row("Exclude", ", ".join(exclude) if exclude else "[dim]None[/dim]")
+    summary.add_row("Rate Limit", str(rate_limit))
+    summary.add_row("Threads", str(threads))
+    summary.add_row("Chaos API", "[green]Yes[/green]" if chaos_set else "[red]No[/red]")
+    summary.add_row("GitHub Token", "[green]Yes[/green]" if github_set else "[red]No[/red]")
+
+    console.print(Panel(summary, title="[bold green]Configuration[/bold green]", border_style="green", padding=(0, 1)))
+    console.print("")
+
+    # Phase info
+    phase_label = f"Phase {phase}" if phase else f"Phase {from_phase}{'-'+str(to_phase) if to_phase else '-6'}"
+    force_note = " [bold yellow](force)[/bold yellow]" if force else ""
+    console.print(f"  [dim]Phases:[/dim] {phase_label}{force_note}")
+    console.print(f"  [dim]Config:[/dim] {config}")
+    console.print("")
+
     # Set log level
     if verbose:
         import logging
         logging.getLogger().setLevel(logging.DEBUG)
-    
+
     # Run pipeline
     console.print(f"[blue]Starting reconx for target: {target}[/blue]")
-    
+
     success = asyncio.run(run_pipeline(
         target=target,
         config=cfg,
@@ -96,42 +145,76 @@ def run(
         force=force,
         console=console
     ))
-    
+
     if success:
-        console.print(f"[green]Pipeline completed successfully![/green]")
+        console.print("")
+        console.print(
+            Panel(
+                "[bold green]Pipeline completed successfully![/bold green]",
+                border_style="green",
+            )
+        )
     else:
-        console.print(f"[red]Pipeline failed![/red]")
+        console.print("")
+        console.print(
+            Panel(
+                "[bold red]Pipeline failed![/bold red]",
+                border_style="red",
+            )
+        )
         sys.exit(1)
 
 
 @cli.command()
-@click.option('--target', '-t', required=True, help='Target domain')
-def review(target: str):
+@click.option('--config', '-c', default='config.yaml', help='Configuration file path')
+def review(config: str):
     """Open manual review queue for a target."""
+    try:
+        cfg = load_config(config)
+    except (FileNotFoundError, yaml.YAMLError):
+        console.print("[red]Config file not found or invalid. Run 'reconx init'[/red]")
+        sys.exit(1)
+
+    target = cfg.get('target')
+    if not target:
+        console.print("[red]No 'target' specified in config file.[/red]")
+        sys.exit(1)
+
     launch_review_tui(target)
 
 
 @cli.command()
-@click.option('--target', '-t', required=True, help='Target domain')
-@click.option('--format', '-f', 'output_format', 
-              type=click.Choice(['json', 'html', 'markdown']), 
+@click.option('--config', '-c', default='config.yaml', help='Configuration file path')
+@click.option('--format', '-f', 'output_format',
+              type=click.Choice(['json', 'html', 'markdown']),
               default='markdown',
               help='Report format')
 @click.option('--output', '-o', help='Output file path')
-def report(target: str, output_format: str, output: Optional[str]):
+def report(config: str, output_format: str, output: Optional[str]):
     """Generate findings report for a target."""
+    try:
+        cfg = load_config(config)
+    except (FileNotFoundError, yaml.YAMLError):
+        console.print("[red]Config file not found or invalid. Run 'reconx init'[/red]")
+        sys.exit(1)
+
+    target = cfg.get('target')
+    if not target:
+        console.print("[red]No 'target' specified in config file.[/red]")
+        sys.exit(1)
+
     workspace = Workspace(target)
-    
+
     if not workspace.exists():
         console.print(f"[red]Workspace for {target} does not exist.[/red]")
-        console.print(f"[yellow]Run: reconx run --target {target}[/yellow]")
+        console.print(f"[yellow]Run: reconx run[/yellow]")
         sys.exit(1)
-    
+
     generator = ReportGenerator(workspace)
-    
+
     if output is None:
         output = f"reconx_report_{target}.{output_format}"
-    
+
     try:
         if output_format == 'json':
             generator.generate_json(output)
@@ -139,7 +222,7 @@ def report(target: str, output_format: str, output: Optional[str]):
             generator.generate_html(output)
         else:
             generator.generate_markdown(output)
-        
+
         console.print(f"[green]Report generated: {output}[/green]")
     except Exception as e:
         console.print(f"[red]Error generating report: {e}[/red]")
@@ -147,31 +230,40 @@ def report(target: str, output_format: str, output: Optional[str]):
 
 
 @cli.command()
-@click.option('--target', '-t', help='Target domain (optional)')
-def status(target: Optional[str]):
+@click.option('--config', '-c', default='config.yaml', help='Configuration file path (optional)')
+def status(config: Optional[str]):
     """Show workspace status."""
+    # Try to load config to get target
+    target = None
+    if config:
+        try:
+            cfg = load_config(config)
+            target = cfg.get('target')
+        except (FileNotFoundError, yaml.YAMLError):
+            pass
+
     if target:
         # Show status for specific target
         workspace = Workspace(target)
         if not workspace.exists():
             console.print(f"[red]Workspace for {target} does not exist.[/red]")
             return
-        
+
         status_data = workspace.get_status()
-        
+
         table = Table(title=f"Workspace Status: {target}", box=box.DOUBLE_EDGE)
         table.add_column("Property", style="cyan")
         table.add_column("Value", style="green")
-        
+
         table.add_row("Target", status_data['target'])
         table.add_row("Workspace Path", status_data['workspace_path'])
-        table.add_row("Phases Completed", 
+        table.add_row("Phases Completed",
                      ", ".join(map(str, status_data['phases_completed'])))
         table.add_row("Confirmed Findings", str(status_data['findings']['confirmed']))
         table.add_row("Review Queue", str(status_data['findings']['review_queue']))
         table.add_row("Dropped Findings", str(status_data['findings']['dropped']))
         table.add_row("Exploit Results", str(status_data['findings']['exploits']))
-        
+
         console.print(table)
     else:
         # List all workspaces
@@ -179,12 +271,12 @@ def status(target: Optional[str]):
         if not workspaces_dir.exists():
             console.print("[yellow]No workspaces found.[/yellow]")
             return
-        
+
         table = Table(title="All Workspaces", box=box.DOUBLE_EDGE)
         table.add_column("Target", style="cyan")
         table.add_column("Phases", style="green")
         table.add_column("Findings", style="yellow")
-        
+
         for ws_dir in sorted(workspaces_dir.iterdir()):
             if ws_dir.is_dir():
                 ws = Workspace(ws_dir.name)
@@ -196,15 +288,26 @@ def status(target: Optional[str]):
                     f"{phases}/6",
                     str(findings)
                 )
-        
+
         console.print(table)
 
 
 @cli.command()
-@click.option('--target', '-t', required=True, help='Target domain')
+@click.option('--config', '-c', default='config.yaml', help='Configuration file path')
 @click.confirmation_option(prompt='Are you sure you want to clear this workspace?')
-def clear(target: str):
+def clear(config: str):
     """Clear workspace for a target."""
+    try:
+        cfg = load_config(config)
+    except (FileNotFoundError, yaml.YAMLError):
+        console.print("[red]Config file not found or invalid. Run 'reconx init'[/red]")
+        sys.exit(1)
+
+    target = cfg.get('target')
+    if not target:
+        console.print("[red]No 'target' specified in config file.[/red]")
+        sys.exit(1)
+
     workspace = Workspace(target)
     if workspace.exists():
         workspace.clear()
@@ -233,7 +336,6 @@ exclude:
 # Rate limiting
 rate_limit: 50          # requests per second globally
 threads: 20
-timeout: 10             # seconds per request
 
 # Wordlists
 wordlist_dirs: /usr/share/seclists/Discovery/Web-Content/
@@ -294,7 +396,7 @@ chaos_api_key: ""
     
     console.print("[green]Created config.yaml template[/green]")
     console.print("[blue]Edit config.yaml with your target and settings, then run:[/blue]")
-    console.print("  reconx run --target example.com --config config.yaml")
+    console.print("  reconx run")
 
 
 if __name__ == '__main__':

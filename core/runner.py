@@ -259,10 +259,11 @@ class AsyncRunner:
         url: str,
         method: str = "GET",
         headers: Optional[Dict[str, str]] = None,
-        timeout: int = 30
+        timeout: int = 30,
+        tool_name: str = "curl"
     ) -> Dict[str, Any]:
         """Fetch a URL using curl subprocess."""
-        cmd = ["curl", "-s", "-L", "-m", str(timeout), "-w", 
+        cmd = ["curl", "-s", "-L", "-m", str(timeout), "-w",
                "\\n%{http_code}\\n%{size_download}"]
         
         if headers:
@@ -273,8 +274,8 @@ class AsyncRunner:
             cmd.extend(["-X", method])
         
         cmd.append(url)
-        
-        result = await self.run("curl", cmd)
+
+        result = await self.run(tool_name, cmd)
         
         if result.success:
             lines = result.stdout.strip().split('\n')

@@ -58,6 +58,8 @@ api.apple.com
 staging.apple.com
 ```
 
+**Timeout Handling:** Subfinder uses a **dedicated runner with 300-second timeout**. For large domains with extensive subdomain histories, this provides ample time for complete results.
+
 **Error Handling:**
 - If tool not found: Log warning, skip, continue with other tools
 - If zero output: Continue (other tools may find subdomains)
@@ -94,6 +96,8 @@ cmd = [
 
 **Output Format:** Plain text, one subdomain per line
 
+**Timeout Handling:** Amass uses a **dedicated runner with 300-second timeout**. The tool writes results incrementally to the output file, so even if it times out, partial results are captured and used.
+
 **Note:** Can be slow (5-10 minutes for large domains). Runs in parallel with other tools.
 
 ---
@@ -125,6 +129,8 @@ cmd = [
 
 **Warning:** Active mode sends DNS queries. Use with caution on monitored networks.
 
+**Timeout Handling:** Amass uses a **dedicated runner with 300-second timeout**. The tool writes results incrementally to the output file, so even if it times out, partial results are captured and used.
+
 ---
 
 ### 4. assetfinder
@@ -133,31 +139,41 @@ cmd = [
 
 **Command:**
 ```bash
-assetfinder --subs-only {target}
+assetfinder --subs-only
 ```
 
 **Flags:**
 - `--subs-only`: Output only subdomains (no domains)
-- `{target}`: Target domain (no flag, positional argument)
+- Input is provided via **stdin pipe** (target written to temp file)
 
 **Example:**
 ```python
+# Write target to temp input file
+input_file = self.workspace.get_raw_file("assetfinder_input.txt")
+with open(input_file, 'w') as f:
+    f.write(self.target)
+
 cmd = [
     self.get_tool_path('assetfinder'),
-    '--subs-only',
-    self.target                  # e.g., "apple.com"
+    '--subs-only'
 ]
 
-# Actual execution:
-# assetfinder --subs-only apple.com
-# Output captured to: workspaces/apple.com/raw/assetfinder.txt
+# Assetfinder reads from stdin, outputs to stdout (no -o flag)
+result = await self.runner.run('assetfinder', cmd, input_file=input_file)
+
+# Results captured from stdout, written to file manually
+# Output saved to: workspaces/apple.com/raw/assetfinder.txt
 ```
 
 **Output Handling:**
 ```python
-# stdout captured, then written to file
+# stdout captured via PIPE, then written to file
 subdomains = [line.strip() for line in result.stdout.split('\n') if line.strip()]
 ```
+
+**Timeout Handling:** Assetfinder uses stdin pipe for input. The base runner provides
+a **300-second timeout**. Since assetfinder only outputs to stdout (no `-o` flag),
+results are captured via PIPE to avoid buffering hangs.
 
 ---
 
@@ -263,13 +279,15 @@ http://staging.apple.com
 
 **Command:** HTTP GET request (no external tool needed)
 ```
-https://crt.sh/?q=%.{target}&output=json
+https://crt.sh/?q=%25.{target}&output=json
 ```
+
+> **Important:** The `%` must be URL-encoded as `%25`. Using `%.` instead of `%25.` will result in a 404 error.
 
 **Example:**
 ```python
-url = f"https://crt.sh/?q=%.{self.target}&output=json"
-# e.g., https://crt.sh/?q=%.apple.com&output=json
+url = f"https://crt.sh/?q=%25.{self.target}&output=json"
+# e.g., https://crt.sh/?q=%25.apple.com&output=json
 
 result = await self.runner.fetch_url(url)
 # Uses internal async HTTP client (curl subprocess)
@@ -301,6 +319,8 @@ for entry in data:
             subdomains.append(sub)
 ```
 
+**Note:** crt.sh may return server errors for domains with very large certificate histories (503/500 errors). In such cases, other discovery tools (subfinder, amass) will compensate.
+
 ---
 
 ### 8. Chaos API
@@ -327,15 +347,30 @@ result = await self.runner.fetch_url(
 ```json
 {
   "domain": "apple.com",
-  "subdomains": ["api", "dev", "staging", "test"]
+  "subdomains": ["", "*", "*.api", "*.app", "analytics", "api", "app", "blog"],
+  "count": 110
 }
 ```
 
 **Processing:**
 ```python
-subdomains = [f"{sub}.{self.target}" for sub in data.get('subdomains', [])]
-# api.apple.com, dev.apple.com, etc.
+raw_subdomains = data.get('subdomains', [])
+for sub in raw_subdomains:
+    sub = sub.strip()
+    if not sub or sub == '*':
+        continue  # Skip empty and wildcard entries
+    if sub.startswith('*.'):
+        # Wildcard: *.api -> *.api.apple.com
+        subdomains.append(f"{sub}.{self.target}")
+    elif sub == self.target:
+        # Exact match
+        subdomains.append(sub)
+    else:
+        # Regular subdomain: api -> api.apple.com
+        subdomains.append(f"{sub}.{self.target}")
 ```
+
+> **Important:** The Chaos API returns **partial subdomain names** (e.g., `"api"`, `"*.api"`, `"blog"`), not full FQDNs. The framework appends the target domain to construct full subdomains. Empty strings and bare `*` entries are filtered out.
 
 **Note:** Skipped if no API key configured.
 

@@ -2,23 +2,23 @@
 
 ## Overview
 
-The `config.yaml` file controls how reconx performs reconnaissance and exploitation. While the CLI `--target` argument specifies **what** to scan, the config file controls **how** to scan it.
+The `config.yaml` file controls everything about how reconx performs reconnaissance and exploitation. The target, scope, performance settings, and API keys are all defined here — **no CLI target flags needed**.
 
-## Critical Concept: CLI Target Overrides Config
+## Critical Concept: Config Is the Single Source of Truth
 
-**Important:** The `--target` CLI argument **always takes precedence** over the `target:` value in config.yaml.
+**Important:** The `target:` value in config.yaml is the **only** way to specify what to scan.
 
 ```bash
 # Config file says:
 target: example.com
 
-# But you run:
-python3 main.py run --target apple.com --config config.yaml
+# Just run:
+python3 main.py run
 
-# Result: Target becomes 'apple.com', config target is ignored
+# Result: Target is 'example.com' from config
 ```
 
-This design allows you to **reuse one config file** for multiple targets.
+To scan a different target, simply edit `config.yaml` or use `--config` with an alternate file.
 
 ---
 
@@ -26,13 +26,13 @@ This design allows you to **reuse one config file** for multiple targets.
 
 ### 1. Target & Scope
 
-#### `target` (Optional)
+#### `target` (Required)
 ```yaml
 target: example.com
 ```
-- **Purpose:** Default/fallback target
-- **Override:** CLI `--target` argument always wins
-- **Recommendation:** Set as placeholder or remove entirely
+- **Purpose:** The domain to test
+- **Must be set:** Pipeline will refuse to run without it
+- **Recommendation:** Set to your engagement target
 
 #### `scope` (Inclusion List)
 ```yaml
@@ -45,7 +45,7 @@ scope:
 - Defines which subdomains are **allowed** in results
 - Wildcards supported: `*.domain.com` matches `api.domain.com`, `test.domain.com`
 - **Empty list `[]`** = Accept everything (no filtering)
-- **Best practice:** Leave empty if using CLI `--target` for flexibility
+- **Best practice:** Use wildcards matching your target domain
 
 **Examples:**
 ```yaml
@@ -54,12 +54,12 @@ scope:
   - "api.example.com"
   - "app.example.com"
 
-# Standard - domain and all subdomains  
+# Standard - domain and all subdomains
 scope:
   - "*.example.com"
   - "example.com"
 
-# Empty - accept all (recommended for CLI usage)
+# Empty - accept all (aggressive scanning)
 scope: []
 ```
 
@@ -88,20 +88,23 @@ exclude:
 ```yaml
 rate_limit: 50          # Global requests per second
 threads: 20             # Parallel operations
-timeout: 10             # Seconds per HTTP request/tool execution
 ```
+
+**Timeout is managed internally by the framework:**
+- Default: **300 seconds** for all tool execution
+- Phase 1 tools (subfinder, amass): **300 seconds** (dedicated runners)
+- HTTP API calls (crt.sh, chaos): **30 seconds**
+- No config needed — the framework handles this automatically
 
 **Adjust based on target:**
 ```yaml
 # Aggressive (fast network, robust target)
 rate_limit: 100
 threads: 50
-timeout: 5
 
 # Conservative (slow network, WAF present, fragile target)
 rate_limit: 10
 threads: 5
-timeout: 30
 ```
 
 ---
@@ -199,18 +202,17 @@ interactsh_server: "your-interactsh-server.com"
 
 ## Practical Configuration Examples
 
-### Example 1: Universal Config (Recommended)
-Reuse for any target without editing:
-
+### Example 1: Standard Config
 ```yaml
 # config.yaml
-target: placeholder.com    # Ignored - use CLI --target
-scope: []                  # Accept all
-exclude: []                # Nothing excluded
+target: example.com
+scope:
+  - "*.example.com"
+  - "example.com"
+exclude: []
 
 rate_limit: 50
 threads: 20
-timeout: 10
 
 wordlist_dirs: /usr/share/seclists/Discovery/Web-Content/
 wordlist_subs: /usr/share/seclists/Discovery/DNS/
@@ -231,8 +233,7 @@ interactsh_server: ""
 
 **Usage:**
 ```bash
-python3 main.py run --target apple.com --config config.yaml
-python3 main.py run --target google.com --config config.yaml
+python3 main.py run
 ```
 
 ---
@@ -259,7 +260,6 @@ threads: 10
 **Usage:**
 ```bash
 python3 main.py run --config apple-config.yaml
-# Note: --target apple.com optional here since it's in config
 ```
 
 ---
@@ -276,7 +276,6 @@ exclude: []
 
 rate_limit: 200             # High speed (internal network)
 threads: 100
-timeout: 5                  # Fast timeout
 
 # All tools explicitly pathed for Docker/CI
 tools:
@@ -297,7 +296,6 @@ exclude: []
 
 rate_limit: 5               # Very slow (evade rate limiting)
 threads: 2
-timeout: 30                 # Long timeouts
 
 # No API keys - passive only
 chaos_api_key: ""
@@ -309,21 +307,17 @@ interactsh_server: ""
 
 ## Common Pitfalls
 
-### Pitfall 1: Scope/CLI Mismatch
+### Pitfall 1: Wrong Scope
 ```yaml
 # config.yaml
-target: example.com
+target: apple.com
 scope:
   - "*.example.com"
 ```
 
-```bash
-python3 main.py run --target apple.com --config config.yaml
-```
+**Problem:** Scope checks for `*.example.com`, so `*.apple.com` subdomains will be **rejected**!
 
-**Problem:** Scope still checks for `*.example.com`, so `*.apple.com` subdomains will be **rejected**!
-
-**Solution:** Use `scope: []` for CLI flexibility, or ensure scope patterns match your CLI target.
+**Solution:** Ensure `scope` patterns match your `target` domain, or use `scope: []` to accept all.
 
 ---
 
@@ -368,7 +362,8 @@ ls /usr/share/seclists/Discovery/Web-Content/
 
 Before running:
 
-- [ ] `scope` is empty `[]` OR matches your CLI `--target` domain
+- [ ] `target` is set to your engagement domain
+- [ ] `scope` is empty `[]` OR matches your target domain
 - [ ] `exclude` contains any sensitive/out-of-scope subdomains
 - [ ] `rate_limit` appropriate for target (production = low, internal = high)
 - [ ] `tools` paths are correct or omitted (to use PATH)
@@ -378,11 +373,25 @@ Before running:
 
 ---
 
-## Command-Line vs Config Priority
+## Command-Line Reference
+
+| Command | Description |
+|---------|-------------|
+| `python3 main.py run` | Run full pipeline (reads config) |
+| `python3 main.py run --phase 1` | Run single phase |
+| `python3 main.py run --from-phase 3` | Resume from phase 3 |
+| `python3 main.py run --force` | Force re-run all phases |
+| `python3 main.py run --config alt.yaml` | Use alternate config |
+| `python3 main.py review` | Open review TUI |
+| `python3 main.py report` | Generate markdown report |
+| `python3 main.py report --format html` | Generate HTML report |
+| `python3 main.py status` | Show workspace status |
+| `python3 main.py clear` | Clear workspace |
+| `python3 main.py init` | Create config template |
 
 | Setting | CLI Flag | Config File | Winner |
 |---------|----------|-------------|---------|
-| Target | `--target` | `target:` | **CLI** |
+| Target | N/A | `target:` | **Config** |
 | Config path | `--config` | N/A | **CLI** |
 | Phase control | `--phase`, `--from-phase` | N/A | **CLI** |
 | Force re-run | `--force` | N/A | **CLI** |
@@ -391,6 +400,7 @@ Before running:
 | Exclude | N/A | `exclude:` | **Config** |
 | Tool paths | N/A | `tools:` | **Config** |
 | API keys | N/A | `chaos_api_key:` etc | **Config** |
+| Timeout | N/A | Managed internally | **Framework** |
 
 ---
 
@@ -403,7 +413,6 @@ scope: []
 exclude: []
 rate_limit: 50
 threads: 20
-timeout: 10
 tools: {}
 ```
 
@@ -419,7 +428,6 @@ exclude:
 
 rate_limit: 20
 threads: 10
-timeout: 15
 
 wordlist_dirs: /usr/share/seclists/Discovery/Web-Content/
 wordlist_subs: /usr/share/seclists/Discovery/DNS/
@@ -451,7 +459,6 @@ tools:
   linkfinder: linkfinder
   x8: x8
   xsstrike: xsstrike
-  ssrfire: ssrfire
   jwt_tool: jwt-tool
   gitdorker: gitdorker
   ghauri: ghauri
@@ -466,9 +473,10 @@ chaos_api_key: ""
 
 ## Summary
 
-1. **Use `scope: []`** for universal configs that work with any `--target`
-2. **CLI `--target` overrides** config `target:`
-3. **`exclude` is checked first** - use to protect sensitive systems
-4. **`rate_limit` controls politeness** - adjust for production vs internal
-5. **Tool paths are optional** - omit to use system PATH
-6. **Keep one master config** and reuse for multiple targets via CLI arguments
+1. **`target:` is required** — it's the single source of truth for what to scan
+2. **`scope: []`** for universal scanning, or match your target domain
+3. **`exclude` is checked first** — use to protect sensitive systems
+4. **`rate_limit` controls politeness** — adjust for production vs internal
+5. **Tool paths are optional** — omit to use system PATH
+6. **Timeout is managed internally** — 300s default, no config needed
+7. **Use `--config`** to switch between different target configs

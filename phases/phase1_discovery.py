@@ -11,6 +11,7 @@ from core.workspace import Workspace
 from core.models import Subdomain, PhaseOutput
 from core.utils import deduplicate_lines, parse_crtsh_json, is_in_scope
 from core.logger import get_logger
+from core.runner import AsyncRunner
 from .base import BasePhase, PhaseException
 
 
@@ -123,94 +124,158 @@ class Phase1Discovery(BasePhase):
     async def _run_subfinder(self) -> List[str]:
         """Run subfinder for subdomain discovery."""
         output_file = self.workspace.get_raw_file("subfinder.txt")
-        
+
         cmd = [
             self.get_tool_path('subfinder'),
             '-d', self.target,
             '-silent',
             '-o', str(output_file)
         ]
-        
-        result = await self.runner.run('subfinder', cmd, output_file)
-        
+
+        # Subfinder needs more time - use a dedicated runner
+        subfinder_runner = AsyncRunner(
+            rate_limit=self.runner.rate_limit,
+            timeout=300
+        )
+        result = await subfinder_runner.run('subfinder', cmd, output_file)
+
         if result.success and output_file.exists():
             with open(output_file, 'r') as f:
                 subdomains = [line.strip() for line in f if line.strip()]
             self.logger.tool_end('subfinder', str(output_file), len(subdomains))
             return subdomains
-        
+
+        # Fallback: parse stdout if output file is empty
+        if result.stdout:
+            subdomains = [line.strip() for line in result.stdout.split('\n') if line.strip()]
+            if subdomains and output_file.exists():
+                with open(output_file, 'w') as f:
+                    f.write('\n'.join(subdomains))
+            self.logger.tool_end('subfinder', str(output_file), len(subdomains))
+            return subdomains
+
+        if result.error_message:
+            self.logger.error(f"subfinder failed: {result.error_message}")
         return []
     
     async def _run_amass_passive(self) -> List[str]:
         """Run amass passive enumeration."""
         output_file = self.workspace.get_raw_file("amass_passive.txt")
-        
+
         cmd = [
             self.get_tool_path('amass'),
             'enum', '-passive',
             '-d', self.target,
             '-o', str(output_file)
         ]
-        
-        result = await self.runner.run('amass_passive', cmd, output_file)
-        
-        if result.success and output_file.exists():
+
+        # Amass needs more time - use a dedicated runner with higher timeout
+        amass_runner = AsyncRunner(
+            rate_limit=self.runner.rate_limit,
+            timeout=300
+        )
+        result = await amass_runner.run('amass_passive', cmd, output_file)
+
+        # Read output file even if the process timed out - amass writes incrementally
+        if output_file.exists():
             with open(output_file, 'r') as f:
                 subdomains = [line.strip() for line in f if line.strip()]
-            self.logger.tool_end('amass_passive', str(output_file), len(subdomains))
-            return subdomains
-        
+            if subdomains:
+                self.logger.tool_end('amass_passive', str(output_file), len(subdomains))
+                return subdomains
+
+        # Fallback: parse stdout if output file is empty
+        if result.stdout:
+            subdomains = [line.strip() for line in result.stdout.split('\n') if line.strip()]
+            if subdomains:
+                if output_file.exists():
+                    with open(output_file, 'w') as f:
+                        f.write('\n'.join(subdomains))
+                self.logger.tool_end('amass_passive', str(output_file), len(subdomains))
+                return subdomains
+
+        if result.error_message:
+            self.logger.error(f"amass_passive failed: {result.error_message}")
         return []
     
     async def _run_amass_active(self) -> List[str]:
         """Run amass active enumeration."""
         output_file = self.workspace.get_raw_file("amass_active.txt")
-        
+
         cmd = [
             self.get_tool_path('amass'),
             'enum', '-active',
             '-d', self.target,
             '-o', str(output_file)
         ]
-        
-        result = await self.runner.run('amass_active', cmd, output_file)
-        
-        if result.success and output_file.exists():
+
+        # Amass needs more time - use a dedicated runner
+        amass_runner = AsyncRunner(
+            rate_limit=self.runner.rate_limit,
+            timeout=300
+        )
+        result = await amass_runner.run('amass_active', cmd, output_file)
+
+        # Read output file even if the process timed out - amass writes incrementally
+        if output_file.exists():
             with open(output_file, 'r') as f:
                 subdomains = [line.strip() for line in f if line.strip()]
-            self.logger.tool_end('amass_active', str(output_file), len(subdomains))
-            return subdomains
-        
+            if subdomains:
+                self.logger.tool_end('amass_active', str(output_file), len(subdomains))
+                return subdomains
+
+        # Fallback: parse stdout if output file is empty
+        if result.stdout:
+            subdomains = [line.strip() for line in result.stdout.split('\n') if line.strip()]
+            if subdomains:
+                if output_file.exists():
+                    with open(output_file, 'w') as f:
+                        f.write('\n'.join(subdomains))
+                self.logger.tool_end('amass_active', str(output_file), len(subdomains))
+                return subdomains
+
+        if result.error_message:
+            self.logger.error(f"amass_active failed: {result.error_message}")
         return []
     
     async def _run_assetfinder(self) -> List[str]:
         """Run assetfinder for subdomain discovery."""
         output_file = self.workspace.get_raw_file("assetfinder.txt")
-        
+
+        # Write target to temp file for stdin
+        input_file = self.workspace.get_raw_file("assetfinder_input.txt")
+        with open(input_file, 'w') as f:
+            f.write(self.target)
+
         cmd = [
             self.get_tool_path('assetfinder'),
-            '--subs-only',
-            self.target
+            '--subs-only'
         ]
-        
-        result = await self.runner.run('assetfinder', cmd, output_file)
-        
-        if result.success:
+
+        result = await self.runner.run(
+            'assetfinder', cmd,
+            input_file=input_file
+        )
+
+        if result.success and result.stdout:
             subdomains = [line.strip() for line in result.stdout.split('\n') if line.strip()]
-            with open(output_file, 'w') as f:
-                f.write('\n'.join(subdomains))
-            self.logger.tool_end('assetfinder', str(output_file), len(subdomains))
-            return subdomains
-        
+            if subdomains:
+                with open(output_file, 'w') as f:
+                    f.write('\n'.join(subdomains))
+                self.logger.tool_end('assetfinder', str(output_file), len(subdomains))
+                return subdomains
+
+        if result.error_message:
+            self.logger.error(f"assetfinder failed: {result.error_message}")
         return []
     
     async def _run_crtsh(self) -> List[str]:
         """Query crt.sh for certificate transparency logs."""
         output_file = self.workspace.get_raw_file("crtsh.json")
-        
-        url = f"https://crt.sh/?q=%.{self.target}&output=json"
-        
-        result = await self.runner.fetch_url(url)
+
+        url = f"https://crt.sh/?q=%25.{self.target}&output=json"
+
+        result = await self.runner.fetch_url(url, tool_name="crt.sh")
         
         subdomains = []
         if result['success']:
@@ -226,28 +291,45 @@ class Phase1Discovery(BasePhase):
         """Query Chaos dataset API."""
         output_file = self.workspace.get_raw_file("chaos.txt")
         api_key = self.config.get('chaos_api_key')
-        
+
         if not api_key:
             return []
-        
+
         url = f"https://dns.projectdiscovery.io/dns/{self.target}/subdomains"
-        
+
         result = await self.runner.fetch_url(
             url,
-            headers={"Authorization": api_key}
+            headers={"Authorization": api_key},
+            tool_name="chaos"
         )
-        
+
         subdomains = []
         if result['success']:
             try:
                 data = json.loads(result['body'])
-                subdomains = [f"{sub}.{self.target}" for sub in data.get('subdomains', [])]
+                raw_subdomains = data.get('subdomains', [])
+                for sub in raw_subdomains:
+                    sub = sub.strip()
+                    if not sub or sub == '*':
+                        continue
+                    # Chaos API returns subdomains like "*.api", "api", "blog"
+                    # We need to format them properly
+                    if sub.startswith('*.'):
+                        # Wildcard: *.api -> *.api.target.com
+                        subdomains.append(f"{sub}.{self.target}")
+                    elif sub == self.target:
+                        # Exact match (e.g. "spendesk.com")
+                        subdomains.append(sub)
+                    else:
+                        # Regular subdomain
+                        subdomains.append(f"{sub}.{self.target}")
+
                 with open(output_file, 'w') as f:
                     f.write('\n'.join(subdomains))
                 self.logger.tool_end('chaos', str(output_file), len(subdomains))
             except json.JSONDecodeError:
                 pass
-        
+
         return subdomains
     
     async def _resolve_dns(self, input_file: Path) -> List[str]:

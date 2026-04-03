@@ -273,7 +273,7 @@ class ReviewQueueTUI:
         
         if self.stats["confirmed"] > 0:
             self.console.print(
-                f"\n[green]Run 'reconx run --target {self.workspace.target} --from-phase 6' "
+                f"\n[green]Run 'reconx run --from-phase 6' "
                 f"to proceed with exploitation.[/green]"
             )
 

@@ -53,7 +53,6 @@ sudo bash setup_tools.sh --wordlists # Wordlists only
 | nikto | sullo/nikto | Web vulnerability scanner |
 | linkfinder | GerbenJavado/LinkFinder | JS endpoint discovery |
 | xsstrike | s0md3v/XSStrike | XSS detection |
-| ssrfire | 0xInfection/ssrfire | SSRF exploitation |
 | jwt-tool | ticarpi/jwt_tool | JWT manipulation |
 | gitdorker | obheda12/GitDorker | GitHub dorking |
 
@@ -102,7 +101,6 @@ sudo bash setup_tools.sh --wordlists # Wordlists only
 ├── nikto           (wrapper script)
 ├── linkfinder      (wrapper script)
 ├── xsstrike        (wrapper script)
-├── ssrfire         (wrapper script)
 ├── jwt-tool        (wrapper script)
 ├── gitdorker       (wrapper script)
 ├── masscan
@@ -118,7 +116,6 @@ sudo bash setup_tools.sh --wordlists # Wordlists only
 ├── nikto/
 ├── LinkFinder/
 ├── XSStrike/
-├── ssrfire/
 ├── jwt_tool/
 ├── GitDorker/
 ├── masscan/
@@ -278,10 +275,10 @@ sudo chmod +x /usr/local/bin/sqlmap
 
 ```bash
 # Remove all tools
-sudo rm -f /usr/local/bin/{subfinder,amass,dnsx,httpx,katana,ffuf,dalfox,gf,waybackurls,gau,gospider,hakrawler,nuclei,arjun,ghauri,trufflehog,sqlmap,paramspider,secretfinder,wafw00f,nikto,linkfinder,xsstrike,ssrfire,jwt-tool,gitdorker,masscan,nmap,feroxbuster,x8}
+sudo rm -f /usr/local/bin/{subfinder,amass,dnsx,httpx,katana,ffuf,dalfox,gf,waybackurls,gau,gospider,hakrawler,nuclei,arjun,ghauri,trufflehog,sqlmap,paramspider,secretfinder,wafw00f,nikto,linkfinder,xsstrike,jwt-tool,gitdorker,masscan,nmap,feroxbuster,x8}
 
 # Remove git tools
-sudo rm -rf /opt/{sqlmap,ParamSpider,SecretFinder,wafw00f,nikto,LinkFinder,XSStrike,ssrfire,jwt_tool,GitDorker,masscan}
+sudo rm -rf /opt/{sqlmap,ParamSpider,SecretFinder,wafw00f,nikto,LinkFinder,XSStrike,jwt_tool,GitDorker,masscan}
 
 # Remove wordlists
 sudo rm -rf /usr/share/wordlists

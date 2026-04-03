@@ -129,7 +129,6 @@ class Config(BaseModel):
     exclude: List[str] = Field(default_factory=list)
     rate_limit: int = 50
     threads: int = 20
-    timeout: int = 10
     wordlist_dirs: Optional[str] = None
     wordlist_subs: Optional[str] = None
     tools: Dict[str, str] = Field(default_factory=dict)

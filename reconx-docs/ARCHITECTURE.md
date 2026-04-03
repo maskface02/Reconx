@@ -186,16 +186,16 @@ if score < 20:    confidence = "low"     → dropped_findings.json
 # Each phase runs tools concurrently
 async def run(self):
     tasks = []
-    
+
     # Add all tool tasks
     if tool_available('subfinder'):
         tasks.append(self._run_subfinder())
     if tool_available('amass'):
         tasks.append(self._run_amass())
-    
+
     # Run all in parallel
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    
+
     # Process results
     for result in results:
         if isinstance(result, Exception):
@@ -203,6 +203,22 @@ async def run(self):
         else:
             process_result(result)
 ```
+
+## Timeout Architecture
+
+The framework uses a **layered timeout strategy**:
+
+| Layer | Timeout | Notes |
+|-------|---------|-------|
+| **Default runner** | 300s | Used by all phases for most tools |
+| **Phase 1 dedicated runners** | 300s | Subfinder, amass passive, amass active |
+| **HTTP fetch (curl)** | 30s | Used for crt.sh and Chaos API |
+
+**Key design decisions:**
+- Slow tools use **dedicated AsyncRunner instances** with custom timeouts
+- Amass writes incrementally to files — results are captured even on timeout
+- Tool failures are logged with descriptive error messages
+- Phase 1 continues with partial results if individual tools fail
 
 ## Error Handling Strategy
 

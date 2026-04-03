@@ -5,9 +5,11 @@ Manages phase execution and chaining.
 import asyncio
 from typing import Optional, Dict, Any
 from pathlib import Path
+from rich.live import Live
+from rich.text import Text
 
 from core.workspace import Workspace
-from core.logger import get_logger, reset_logger
+from core.logger import get_logger, reset_logger, tool_tracker
 from core.models import PhaseOutput
 from phases import (
     Phase1Discovery,
@@ -19,6 +21,18 @@ from phases import (
     FPFilter
 )
 from phases.base import PhaseException
+
+
+# Phase display names
+PHASE_NAMES = {
+    1: "Subdomain & Asset Discovery",
+    2: "HTTP Probing & Tech Fingerprinting",
+    3: "URL & Endpoint Crawling",
+    4: "Directory Enumeration & Parameter Discovery",
+    5: "Vulnerability Scanning & Secret Hunting",
+    "fp": "False Positive Filtering & Scoring",
+    6: "Targeted Exploitation",
+}
 
 
 class PipelineOrchestrator:
@@ -77,7 +91,7 @@ class PipelineOrchestrator:
                 phases = [p for p in phases if (isinstance(p, int) and p <= to_phase) or p == "fp"]
         
         self.logger.info(
-            f"Starting pipeline for {self.target}",
+            f"Starting pipeline for {self.target}", silent=True,
             phases=phases,
             force=self.force
         )
@@ -85,7 +99,7 @@ class PipelineOrchestrator:
         for phase_key in phases:
             # Skip phases before from_phase
             if isinstance(phase_key, int) and phase_key < from_phase:
-                self.logger.info(f"Skipping Phase {phase_key} (before --from-phase)")
+                self.logger.info(f"Skipping Phase {phase_key} (before --from-phase)", silent=True)
                 continue
             
             # Get phase class
@@ -102,45 +116,83 @@ class PipelineOrchestrator:
                     )
                     continue
             
-            # Run phase
+            # Get phase name for display
+            phase_name = PHASE_NAMES.get(phase_key, f"Phase {phase_key}")
+
+            # Show phase separator
+            if self.console:
+                width = 70
+                left_pad = (width - len(phase_name) - 6) // 2
+                separator = "━" * max(left_pad, 2)
+                self.console.print("")
+                self.console.print(
+                    f"[bold cyan]{separator}▶[/bold cyan] [bold green]Phase {phase_key}: {phase_name}[/bold green] [bold cyan]◀{separator}[/bold cyan]"
+                )
+
+            # Reset tool tracker for this phase
+            tool_tracker.reset()
+
+            # Run phase with live tool status
             self.logger.set_phase_context(
                 phase=str(phase_key),
                 target=self.target
             )
-            
+
             try:
                 phase = PhaseClass(self.workspace, self.config)
-                output = await phase.run()
-                
+                if self.console:
+                    async def _update_status():
+                        """Background task to refresh the live display."""
+                        while True:
+                            await asyncio.sleep(0.3)
+                            if live:
+                                live.update(tool_tracker.render())
+
+                    live = None  # Will be set by context manager
+                    with Live(tool_tracker.render(), console=self.console,
+                              refresh_per_second=3, transient=False) as live_display:
+                        live = live_display
+                        status_task = asyncio.create_task(_update_status())
+                        try:
+                            output = await phase.run()
+                        finally:
+                            status_task.cancel()
+                else:
+                    output = await phase.run()
+
                 self.logger.info(
-                    f"Phase {phase_key} complete",
+                    f"Phase {phase_key} complete", silent=True,
                     output_file=output.output_file,
                     count=output.count
                 )
-                
+
+                # Show phase completion
+                if self.console:
+                    self.console.print(f"  [green]✓[/green] [dim]{phase_name}[/dim] — [bold]{output.count} items[/bold]")
+
+
             except PhaseException as e:
-                self.logger.error(f"Phase {phase_key} failed: {e}")
+                self.logger.error(f"Phase {phase_key} failed: {e}", silent=True)
                 return False
             except Exception as e:
-                self.logger.error(f"Unexpected error in Phase {phase_key}: {e}")
+                self.logger.error(f"Unexpected error in Phase {phase_key}: {e}", silent=True)
                 import traceback
-                self.logger.debug(traceback.format_exc())
+                self.logger.debug(traceback.format_exc(), silent=True)
                 return False
-            
+
             # Special handling for FP filter phase
             if phase_key == "fp":
                 review_size = self.workspace.review_queue_size()
                 if review_size > 0:
                     self.logger.warning(
-                        f"{review_size} findings need manual review."
+                        f"{review_size} findings need manual review.", silent=True
                     )
                     self.logger.warning(
-                        f"Run: reconx review --target {self.target} "
-                        f"then re-run from phase 6."
+                        f"Run: reconx review then re-run from phase 6.", silent=True
                     )
                     return True  # Not a failure, just needs review
-        
-        self.logger.info("Pipeline completed successfully")
+
+        self.logger.info("Pipeline completed successfully", silent=True)
         return True
     
     async def run_phase(self, phase_number: int) -> bool:

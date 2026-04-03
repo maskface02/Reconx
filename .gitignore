@@ -75,6 +75,9 @@ venv.bak/
 *.sublime-project
 *.sublime-workspace
 
+# Qwen Code
+.qwen/
+
 # Jupyter Notebook
 .ipynb_checkpoints
 

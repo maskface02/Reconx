@@ -11,7 +11,7 @@
 - **6-Phase Pipeline**: Complete workflow from subdomain discovery to targeted exploitation
 - **Intelligent FP Filter**: Confidence-based scoring engine reduces noise by 60-80%
 - **Async Architecture**: High-performance concurrent execution with rate limiting
-- **Modular Design**: Run individual phases or full pipeline
+- **Config-Driven**: Target and scope defined in config — no CLI flags needed
 - **Resume Support**: Re-run skips completed phases (unless `--force`)
 - **Manual Review TUI**: Interactive terminal UI for uncertain findings
 - **Multi-Format Reports**: JSON, HTML, and Markdown output
@@ -19,7 +19,7 @@
 ## 🏗️ Architecture
 
 ```
-Phase 1: Discovery     → subfinder, amass, assetfinder, crt.sh
+Phase 1: Discovery     → subfinder, amass, assetfinder, crt.sh, chaos
     ↓
 Phase 2: Probing       → httpx, masscan, nmap, wafw00f
     ↓
@@ -44,7 +44,7 @@ git clone https://github.com/maskface02/reconx.git
 cd reconx
 
 # Install Python dependencies
-pip3 install -r requirements.txt  --break-system-packages
+pip3 install -r requirements.txt --break-system-packages
 
 # Install external security tools
 sudo bash setup_tools.sh
@@ -56,47 +56,77 @@ sudo bash setup_tools.sh
 # Create configuration template
 python3 main.py init
 
-# Edit config.yaml with your target settings
+# Edit config.yaml with your target and API keys
 vim config.yaml
 
-# Run full pipeline
-python3 main.py run --target example.com --config config.yaml
+# Run full pipeline — reads target from config.yaml
+python3 main.py run
 ```
 
 ## 📋 Usage Examples
 
-### Run Specific Phase
+### Run Pipeline
 ```bash
-python3 main.py run --target example.com --phase 1  # Discovery only
-```
+# Full pipeline (reads target from config.yaml)
+python3 main.py run
 
-### Resume from Phase
-```bash
-python3 main.py run --target example.com --from-phase 3
+# Specific phase only
+python3 main.py run --phase 1
+
+# Resume from a specific phase
+python3 main.py run --from-phase 3
+
+# Force re-run (skip cached phases)
+python3 main.py run --force
+
+# Use alternate config
+python3 main.py run --config apple-config.yaml
 ```
 
 ### Manual Review
 ```bash
-python3 main.py review --target example.com
+python3 main.py review
 ```
 
 ### Generate Report
 ```bash
-python3 main.py report --target example.com --format html --output report.html
+python3 main.py report --format html --output report.html
+```
+
+### Check Status
+```bash
+# Show status for config's target
+python3 main.py status
+
+# List all workspaces (no config needed)
+python3 main.py status
+```
+
+### Clear Workspace
+```bash
+python3 main.py clear
 ```
 
 ## 🔧 Configuration
 
-Minimal `config.yaml`:
+`config.yaml` (all settings read from file — no CLI target override):
 ```yaml
 target: example.com
 scope: []                  # Accept all (or specify ["*.example.com"])
 exclude: []
 rate_limit: 50
 threads: 20
-timeout: 10
+
+# Tool paths (leave empty to use PATH)
 tools: {}
+
+# Optional API keys
+chaos_api_key: ""
+github_token: ""
+interactsh_server: ""
 ```
+
+> **Note:** The framework uses a **300-second default timeout** for tool execution. Slow tools like amass get dedicated runners with extended timeouts (180s). This is managed internally — no config needed.
 
 ## 📊 Output Structure
 
@@ -128,7 +158,7 @@ Intelligent scoring system:
 
 **25+ security tools integrated:**
 
-- **Discovery**: subfinder, amass, assetfinder, dnsx, crt.sh, chaos
+- **Discovery**: subfinder, amass (passive + active), assetfinder, dnsx, crt.sh, chaos API
 - **Probing**: httpx, masscan, nmap, wafw00f
 - **Crawling**: katana, gospider, hakrawler, waybackurls, gau, linkfinder
 - **Enumeration**: ffuf, feroxbuster, paramspider, arjun, x8, gf
@@ -140,6 +170,7 @@ Intelligent scoring system:
 - [Configuration Guide](reconx-docs/reconx_config_guide.md) - Setup and configuration
 - [Tools Reference](reconx-docs/reconx_tools_reference.md) - All tools, commands, and flags
 - [FP Filter Logic](reconx-docs/reconx_fp_filter_guide.md) - False positive filtering explained
+- [Setup Guide](reconx-docs/setup_tools_guide.md) - Tool installation
 - [Architecture](reconx-docs/ARCHITECTURE.md) - System design and data flow
 
 ## ⚠️ Disclaimer

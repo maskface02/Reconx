@@ -30,7 +30,7 @@ class BasePhase(ABC):
         self.logger = get_logger()
         self.runner = AsyncRunner(
             rate_limit=config.get('rate_limit', 50),
-            timeout=config.get('timeout', 300)
+            timeout=300  # Framework default: 300 seconds
         )
         self.tools_config = config.get('tools', {})
     
