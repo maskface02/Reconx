@@ -30,13 +30,21 @@ console = Console()
 
 
 def show_banner(console_obj: Console):
-    """Display the R3c0nX banner from banner.txt in green."""
-    banner_path = Path(__file__).parent / "banner.txt"
-    if banner_path.exists():
-        banner_text = banner_path.read_text()
-        console_obj.print(f"[bold green]{banner_text}[/bold green]")
-    else:
-        console_obj.print("[bold green]R3c0nX[/bold green]")
+    """Display the R3c0nX banner inline (no external file)."""
+    from rich.text import Text
+    banner_raw = (
+        " $$$$$$$\\   $$$$$$\\             $$$$$$\\            $$\\   $$\\ \n"
+        " $$  __$$\\ $$ ___$$\\           $$$ __$$\\           $$ |  $$ |\n"
+        " $$ |  $$ |\\_/   $$ | $$$$$$$\\ $$$$\\ $$ |$$$$$$$\\  \\$$\\ $$  |\n"
+        " $$$$$$$  |  $$$$$ / $$  _____|$$\\$$\\$$ |$$  __$$\\  \\$$$$  / \n"
+        " $$  __$$<   \\___$$\\ $$ /      $$ \\$$$$ |$$ |  $$ | $$  $$< \n"
+        " $$ |  $$ |$$\\   $$ |$$ |      $$ |\\$$$ |$$ |  $$ |$$  /\\$$\\\n"
+        " $$ |  $$ |\\$$$$$$  |\\$$$$$$$\\ \\$$$$$$  /$$ |  $$ |$$ /  $$ |\n"
+        " \\__|  \\__| \\______/  \\_______| \\______/ \\__|  \\__|\\__|  \\__|\n"
+    )
+    banner_text = Text(banner_raw)
+    banner_text.stylize("bold green")
+    console_obj.print(banner_text)
 
     console_obj.print(
         Panel(
