@@ -229,20 +229,20 @@ install_go_tools() {
   export GOBIN="$INSTALL_DIR"
 
   declare -A tools=(
-    ["subfinder"]="github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"
+    ["gf"]="github.com/tomnomnom/gf@latest"
+    ["ffuf"]="github.com/ffuf/ffuf/v2@latest"
+    ["gau"]="github.com/lc/gau/v2/cmd/gau@latest"
+    ["dalfox"]="github.com/hahwul/dalfox/v2@latest"
+    ["hakrawler"]="github.com/hakluke/hakrawler@latest"
     ["amass"]="github.com/owasp-amass/amass/v4/...@master"
+    ["waybackurls"]="github.com/tomnomnom/waybackurls@latest"
+    ["gospider"]="github.com/jaeles-project/gospider@latest"
     ["assetfinder"]="github.com/tomnomnom/assetfinder@latest"
     ["dnsx"]="github.com/projectdiscovery/dnsx/cmd/dnsx@latest"
     ["httpx"]="github.com/projectdiscovery/httpx/cmd/httpx@latest"
     ["katana"]="github.com/projectdiscovery/katana/cmd/katana@latest"
-    ["ffuf"]="github.com/ffuf/ffuf/v2@latest"
-    ["dalfox"]="github.com/hahwul/dalfox/v2@latest"
-    ["waybackurls"]="github.com/tomnomnom/waybackurls@latest"
-    ["gau"]="github.com/lc/gau/v2/cmd/gau@latest"
-    ["gospider"]="github.com/jaeles-project/gospider@latest"
-    ["hakrawler"]="github.com/hakluke/hakrawler@latest"
     ["nuclei"]="github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"
-    ["gf"]="github.com/tomnomnom/gf@latest"
+    ["subfinder"]="github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest"
   )
 
   for name in "${!tools[@]}"; do
@@ -339,19 +339,22 @@ install_compiled() {
   # ── masscan ────────────────────────────────────────────────────────────────
   sub_section "Building masscan from source..."
   local masscan_tmp
-  masscan_tmp=$(mktemp -d /tmp/masscan.XXXXXX)
-  git clone --depth 1 https://github.com/robertdavidgraham/masscan.git "$masscan_tmp" 2>/dev/null
-  make -C "$masscan_tmp" -j"$(nproc)" >/dev/null 2>&1
-  cp "$masscan_tmp/bin/masscan" "$INSTALL_DIR/"
-  chown "$SUDO_USER_NAME:$SUDO_USER_NAME" "$INSTALL_DIR/masscan"
-  rm -rf "$masscan_tmp"
-  ok "masscan installed"
+  if [ -x "$INSTALL_DIR/masscan" ]; then
+    info "masscan  already installed";
+  else
+    masscan_tmp=$(mktemp -d /tmp/masscan.XXXXXX)
+    git clone --depth 1 https://github.com/robertdavidgraham/masscan.git "$masscan_tmp" 2>/dev/null
+    make -C "$masscan_tmp" -j"$(nproc)" >/dev/null 2>&1
+    cp "$masscan_tmp/bin/masscan" "$INSTALL_DIR/"
+    chown "$SUDO_USER_NAME:$SUDO_USER_NAME" "$INSTALL_DIR/masscan"
+    rm -rf "$masscan_tmp"
+  fi
 
   # ── nmap ───────────────────────────────────────────────────────────────────
   sub_section "Building nmap from source..."
 
   if [ -x "$INSTALL_DIR/nmap" ]; then
-    info "nmap already installed at $INSTALL_DIR/nmap — skipping"
+    info "nmap already installed"
   else
     local nmap_ver
     nmap_ver=$(curl -fsSL "https://nmap.org/dist/" \
@@ -391,6 +394,7 @@ install_compiled() {
     info "Installing nmap to ~/.local/..."
     make -C "$nmap_tmp" install 2>&1 | tail -5
     rm -rf "$nmap_tmp"
+    ok "nmap installed"
 
     # Fix ownership — make install runs as root
     chown "$SUDO_USER_NAME:$SUDO_USER_NAME" "$INSTALL_DIR/nmap"              2>/dev/null || true
@@ -407,6 +411,29 @@ install_compiled() {
     fi
 
     ok "nmap ${nmap_ver} installed → $INSTALL_DIR/nmap"
+  fi
+
+# ── trufflehog ─────────────────────────────────────────────────────────────
+  sub_section "Building trufflehog from source..."
+  if [ -x "$INSTALL_DIR/trufflehog" ]; then
+    info "trufflehog already installed"
+  else
+    local trufflehog_tmp
+    trufflehog_tmp=$(mktemp -d /tmp/trufflehog.XXXXXX)
+    git clone --depth 1 https://github.com/trufflesecurity/trufflehog.git "$trufflehog_tmp" 2>/dev/null
+  
+  # Fix ownership
+    chown -R "$SUDO_USER_NAME:$SUDO_USER_NAME" "$trufflehog_tmp"
+  
+  # Build as the user (preserves current directory context)
+    sudo -u "$SUDO_USER_NAME" bash -c "export GOPATH='$GO_CACHE' && export GOBIN='$INSTALL_DIR' && cd '$trufflehog_tmp' && '$GO_DIR/bin/go' install ./..." 2>&1 | tail -5
+  
+    if [ -f "$INSTALL_DIR/trufflehog" ]; then
+      ok "trufflehog installed"
+    else
+      warn "trufflehog build may have failed"
+    fi
+    rm -rf "$trufflehog_tmp"
   fi
 }
 
