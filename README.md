@@ -44,7 +44,7 @@ git clone https://github.com/maskface02/reconx.git
 cd reconx
 
 # Install Python dependencies
-pip3 install -r requirements.txt
+pip3 install -r requirements.txt  --break-system-packages
 
 # Install external security tools
 sudo bash setup_tools.sh

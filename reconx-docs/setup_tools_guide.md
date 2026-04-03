@@ -140,7 +140,7 @@ sudo bash setup_tools.sh --wordlists # Wordlists only
 
 ```bash
 # Check all tools
-which subfinder amass dnsx httpx katana ffuf dalfox gf waybackurls gau gospider hakrawler nuclei arjun ghauri trufflehog sqlmap paramspider secretfinder wafw00f nikto linkfinder xsstrike ssrfire jwt-tool gitdorker masscan nmap feroxbuster x8
+which subfinder amass dnsx httpx katana ffuf dalfox gf waybackurls gau gospider hakrawler nuclei arjun ghauri trufflehog sqlmap paramspider secretfinder wafw00f nikto linkfinder xsstrike jwt-tool gitdorker masscan nmap feroxbuster x8
 
 # Test individual tools
 subfinder -version
