@@ -196,9 +196,9 @@ def review(config: str):
 @cli.command()
 @click.option('--config', '-c', default='config.yaml', help='Configuration file path')
 @click.option('--format', '-f', 'output_format',
-              type=click.Choice(['json', 'html', 'markdown', 'tree']),
+              type=click.Choice(['json', 'html', 'markdown']),
               default='markdown',
-              help='Report format (tree = interactive roadmap-style)')
+              help='Report format')
 @click.option('--phase', '-p', type=int, help='Generate report for specific phase only')
 @click.option('--output', '-o', help='Output file path')
 def report(config: str, output_format: str, phase: Optional[int], output: Optional[str]):
@@ -225,21 +225,14 @@ def report(config: str, output_format: str, phase: Optional[int], output: Option
 
     # Per-phase report
     if phase is not None:
-        ext = 'html' if output_format == 'html' else 'md' if output_format == 'markdown' else 'html'
-        if output_format == 'tree':
-            ext = 'html'
+        ext = 'html' if output_format == 'html' else 'md'
         if output is None:
-            output = f"reports/{target}_phase{phase}_report.{ext}" if output_format != 'tree' else f"reports/{target}_phase{phase}_tree.html"
+            output = f"reports/{target}_phase{phase}_report.{ext}"
 
         Path(output).parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            if output_format == 'tree':
-                generator.generate_tree_report(phase, output)
-                console.print(f"[green]Phase {phase} tree report generated: {output}[/green]")
-                console.print("[dim]Opening in browser...[/dim]")
-                webbrowser.open(Path(output).resolve().as_uri())
-            elif output_format == 'html':
+            if output_format == 'html':
                 generator.generate_phase_html(phase, output)
                 console.print(f"[green]Phase {phase} report generated: {output}[/green]")
                 console.print("[dim]Opening in browser...[/dim]")
@@ -261,17 +254,12 @@ def report(config: str, output_format: str, phase: Optional[int], output: Option
 
     # Full pipeline report
     if output is None:
-        output = f"reports/{target}_report.{output_format}" if output_format != 'tree' else f"reports/{target}_tree.html"
+        output = f"reports/{target}_report.{output_format}"
 
     Path(output).parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        if output_format == 'tree':
-            generator.generate_tree_report(output_path=output)
-            console.print(f"[green]Full tree report generated: {output}[/green]")
-            console.print("[dim]Opening in browser...[/dim]")
-            webbrowser.open(Path(output).resolve().as_uri())
-        elif output_format == 'html':
+        if output_format == 'html':
             generator.generate_html(output)
             console.print(f"[green]Report generated: {output}[/green]")
             console.print("[dim]Opening in browser...[/dim]")
