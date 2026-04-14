@@ -417,12 +417,22 @@ function filterTable() {{
         rows = ""
         for item in data:
             sub = html_mod.escape(item.get('subdomain', ''))
-            ip = html_mod.escape(item.get('ip') or '—')
+            ip = html_mod.escape(item.get('ip') or '')
             cname = html_mod.escape(item.get('cname') or '—')
             asn = html_mod.escape(item.get('asn') or '—')
             sources = html_mod.escape(', '.join(item.get('sources', [])) or '—')
             alive = '✅' if item.get('alive') else '❌'
-            rows += f"<tr><td>{sub}</td><td>{ip}</td><td>{cname}</td><td>{asn}</td><td>{sources}</td><td>{alive}</td></tr>\n"
+            
+            # Make subdomain clickable
+            sub_display = f'<a href="https://{sub}" target="_blank" rel="noopener noreferrer">{sub}</a>' if sub and sub != '—' else sub
+            
+            # Make IP clickable
+            if ip and ip != '—':
+                ip_display = f'<a href="https://ipinfo.io/{ip}" target="_blank" rel="noopener noreferrer">{ip}</a>'
+            else:
+                ip_display = '—'
+            
+            rows += f"<tr><td>{sub_display}</td><td>{ip_display}</td><td>{cname}</td><td>{asn}</td><td>{sources}</td><td>{alive}</td></tr>\n"
 
         return f"""<table id="results"><thead><tr>
 <th>Subdomain</th><th>IP</th><th>CNAME</th><th>ASN</th><th>Sources</th><th>Alive</th>
@@ -491,10 +501,11 @@ function filterTable() {{
         rows = ""
         for item in data:
             url = html_mod.escape(item.get('url', ''))
+            url_display = f'<a href="{url}" target="_blank" rel="noopener noreferrer">{url}</a>' if url else url
             param = html_mod.escape(item.get('param', ''))
             method = html_mod.escape(item.get('method', ''))
             pattern = html_mod.escape(item.get('pattern') or '—')
-            rows += f"<tr><td>{url}</td><td>{param}</td><td>{method}</td><td>{pattern}</td></tr>\n"
+            rows += f"<tr><td>{url_display}</td><td>{param}</td><td>{method}</td><td>{pattern}</td></tr>\n"
 
         return f"""<table id="results"><thead><tr>
 <th>URL</th><th>Parameter</th><th>Method</th><th>GF Pattern</th>
@@ -516,10 +527,11 @@ function filterTable() {{
             color = sev_colors.get(sev, '#7f8c8d')
             vuln = html_mod.escape(item.get('vuln_type', ''))
             url = html_mod.escape(item.get('url', ''))
+            url_display = f'<a href="{url}" target="_blank" rel="noopener noreferrer">{url}</a>' if url else url
             tool = html_mod.escape(item.get('tool', ''))
             evidence = html_mod.escape(str(item.get('evidence', ''))[:200])
             score = item.get('score', 0)
-            rows += f'<tr style="border-left:4px solid {color}"><td><span style="color:{color};font-weight:bold">{sev.upper()}</span></td><td>{vuln}</td><td>{url}</td><td>{tool}</td><td>{score}</td><td title="{evidence}">{evidence[:100]}...</td></tr>\n'
+            rows += f'<tr style="border-left:4px solid {color}"><td><span style="color:{color};font-weight:bold">{sev.upper()}</span></td><td>{vuln}</td><td>{url_display}</td><td>{tool}</td><td>{score}</td><td title="{evidence}">{evidence[:100]}...</td></tr>\n'
 
         return f"""<table id="results"><thead><tr>
 <th>Severity</th><th>Type</th><th>URL</th><th>Tool</th><th>Score</th><th>Evidence</th>
