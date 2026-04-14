@@ -5,12 +5,14 @@ CLI entry point for the reconx framework.
 """
 import asyncio
 import sys
+import webbrowser
 from pathlib import Path
 from typing import Optional
 
 import click
 import yaml
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -194,12 +196,13 @@ def review(config: str):
 @cli.command()
 @click.option('--config', '-c', default='config.yaml', help='Configuration file path')
 @click.option('--format', '-f', 'output_format',
-              type=click.Choice(['json', 'html', 'markdown']),
+              type=click.Choice(['json', 'html', 'markdown', 'tree']),
               default='markdown',
-              help='Report format')
+              help='Report format (tree = interactive roadmap-style)')
+@click.option('--phase', '-p', type=int, help='Generate report for specific phase only')
 @click.option('--output', '-o', help='Output file path')
-def report(config: str, output_format: str, output: Optional[str]):
-    """Generate findings report for a target."""
+def report(config: str, output_format: str, phase: Optional[int], output: Optional[str]):
+    """Generate findings report for a target or specific phase."""
     try:
         cfg = load_config(config)
     except (FileNotFoundError, yaml.YAMLError):
@@ -220,18 +223,68 @@ def report(config: str, output_format: str, output: Optional[str]):
 
     generator = ReportGenerator(workspace)
 
+    # Per-phase report
+    if phase is not None:
+        ext = 'html' if output_format == 'html' else 'md' if output_format == 'markdown' else 'html'
+        if output_format == 'tree':
+            ext = 'html'
+        if output is None:
+            output = f"reports/{target}_phase{phase}_report.{ext}" if output_format != 'tree' else f"reports/{target}_phase{phase}_tree.html"
+
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            if output_format == 'tree':
+                generator.generate_tree_report(phase, output)
+                console.print(f"[green]Phase {phase} tree report generated: {output}[/green]")
+                console.print("[dim]Opening in browser...[/dim]")
+                webbrowser.open(Path(output).resolve().as_uri())
+            elif output_format == 'html':
+                generator.generate_phase_html(phase, output)
+                console.print(f"[green]Phase {phase} report generated: {output}[/green]")
+                console.print("[dim]Opening in browser...[/dim]")
+                webbrowser.open(Path(output).resolve().as_uri())
+            elif output_format == 'markdown':
+                generator.generate_phase_markdown(phase, output)
+                console.print(f"[green]Phase {phase} report generated: {output}[/green]")
+                with open(output, 'r') as f:
+                    md_content = f.read()
+                console.print("")
+                console.print(Markdown(md_content))
+            else:
+                generator.generate_json(output)
+                console.print(f"[green]Phase {phase} report generated: {output}[/green]")
+        except Exception as e:
+            console.print(f"[red]Error generating phase {phase} report: {e}[/red]")
+            sys.exit(1)
+        return
+
+    # Full pipeline report
     if output is None:
-        output = f"reconx_report_{target}.{output_format}"
+        output = f"reports/{target}_report.{output_format}" if output_format != 'tree' else f"reports/{target}_tree.html"
+
+    Path(output).parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        if output_format == 'json':
-            generator.generate_json(output)
+        if output_format == 'tree':
+            generator.generate_tree_report(output_path=output)
+            console.print(f"[green]Full tree report generated: {output}[/green]")
+            console.print("[dim]Opening in browser...[/dim]")
+            webbrowser.open(Path(output).resolve().as_uri())
         elif output_format == 'html':
             generator.generate_html(output)
-        else:
+            console.print(f"[green]Report generated: {output}[/green]")
+            console.print("[dim]Opening in browser...[/dim]")
+            webbrowser.open(Path(output).resolve().as_uri())
+        elif output_format == 'markdown':
             generator.generate_markdown(output)
-
-        console.print(f"[green]Report generated: {output}[/green]")
+            console.print(f"[green]Report generated: {output}[/green]")
+            with open(output, 'r') as f:
+                md_content = f.read()
+            console.print("")
+            console.print(Markdown(md_content))
+        else:
+            generator.generate_json(output)
     except Exception as e:
         console.print(f"[red]Error generating report: {e}[/red]")
         sys.exit(1)
@@ -273,6 +326,48 @@ def status(config: Optional[str]):
         table.add_row("Exploit Results", str(status_data['findings']['exploits']))
 
         console.print(table)
+
+        # Check for interrupted previous run
+        interrupted = workspace.get_interrupted_phase()
+        if interrupted:
+            console.print("")
+            console.print(
+                Panel(
+                    f"[bold yellow]Previous run was interrupted![/bold yellow]\n\n"
+                    f"Target: [bold]{interrupted['target']}[/bold]\n"
+                    f"Stopped at: [bold]{interrupted['phase_name']}[/bold]\n\n"
+                    f"[dim]Run 'python3 main.py run' to resume from the next runnable phase.[/dim]",
+                    title="[bold red]⚠ Interrupted Run[/bold red]",
+                    border_style="yellow",
+                    padding=(1, 2),
+                )
+            )
+
+        # Show next runnable phase
+        next_phase = workspace.get_next_runnable_phase()
+        if next_phase is not None:
+            console.print("")
+            console.print(
+                Panel(
+                    f"Next runnable phase: [bold green]Phase {next_phase}[/bold green]\n\n"
+                    f"Run: [cyan]python3 main.py run --phase {next_phase}[/cyan]\n"
+                    f"Or: [cyan]python3 main.py run --from-phase {next_phase}[/cyan]",
+                    title="[bold yellow]Next Action[/bold yellow]",
+                    border_style="yellow",
+                    padding=(1, 2),
+                )
+            )
+        else:
+            console.print("")
+            console.print(
+                Panel(
+                    "[bold green]All phases completed![/bold green]\n"
+                    "Use [cyan]--force[/cyan] to re-run phases.",
+                    title="[bold yellow]Status[/bold yellow]",
+                    border_style="green",
+                    padding=(1, 2),
+                )
+            )
     else:
         # List all workspaces
         workspaces_dir = Path("./workspaces")

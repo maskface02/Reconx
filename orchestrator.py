@@ -7,6 +7,7 @@ from typing import Optional, Dict, Any
 from pathlib import Path
 from rich.live import Live
 from rich.text import Text
+from rich.panel import Panel
 
 from core.workspace import Workspace
 from core.logger import get_logger, reset_logger, tool_tracker
@@ -68,28 +69,101 @@ class PipelineOrchestrator:
             6: Phase6Exploitation,
         }
     
-    async def run_pipeline(self, from_phase: int = 1, 
+    async def run_pipeline(self, from_phase: int = 1,
                           to_phase: Optional[int] = None,
                           single_phase: Optional[int] = None) -> bool:
         """
         Run the full or partial pipeline.
-        
+
         Args:
             from_phase: Start from this phase (1-6)
             to_phase: Stop at this phase (default: run all)
             single_phase: Run only this phase
-        
+
         Returns:
             True if pipeline completed successfully
         """
+        # Check for interrupted previous run BEFORE any logging
+        next_runnable = self.workspace.get_next_runnable_phase()
+        interrupted = self.workspace.get_interrupted_phase()
+
+        # Auto-resume from next runnable phase for full pipeline runs
+        if single_phase is None and not self.force and next_runnable is not None and next_runnable > from_phase:
+            # User ran 'python3 main.py run' without specifying a phase
+            # Auto-adjust to start from the next runnable phase
+            if self.console:
+                completed_phases = [p for p in range(1, next_runnable) if self.workspace.phase_completed(p)]
+                if completed_phases or interrupted:
+                    self.console.print("")
+                    if interrupted:
+                        phase_name = interrupted['phase_name']
+                        self.console.print(
+                            Panel(
+                                f"[bold yellow]Previous run was interrupted![/bold yellow]\n\n"
+                                f"Target: [bold]{interrupted['target']}[/bold]\n"
+                                f"Stopped at: [bold]{phase_name}[/bold]\n\n"
+                                f"[dim]Last log entries:[/dim]\n"
+                                + "\n".join([self._format_log_entry(l) for l in interrupted['last_logs'][-5:] if l.strip()]),
+                                title="[bold red]⚠ Interrupted Run[/bold red]",
+                                border_style="yellow",
+                                padding=(1, 2),
+                            )
+                        )
+                        self.console.print("")
+
+                    self.console.print(
+                        f"[bold green]Auto-resuming from Phase {next_runnable}[/bold green] "
+                        f"[dim](Phases 1-{next_runnable-1} already completed)[/dim]"
+                    )
+                    self.console.print("")
+
+            # Adjust from_phase to the next runnable phase
+            from_phase = next_runnable
+
+        # NOW log the starting message (after interruption check)
+        self.logger.info(
+            f"Starting pipeline for {self.target}", silent=True,
+            phases=[single_phase] if single_phase is not None else [1, 2, 3, 4, 5, "fp", 6],
+            force=self.force
+        )
+
         # Determine phases to run
         if single_phase is not None:
             phases = [single_phase]
+
+            # Check if the requested phase can run based on existing output files
+            if next_runnable is not None and single_phase > next_runnable and not self.force:
+                # Show helpful error message
+                if self.console:
+                    self.console.print("")
+                    self.console.print(
+                        f"[bold red]Error:[/bold red] Phase {single_phase} cannot run yet. "
+                        f"Required phase output files are missing."
+                    )
+                    self.console.print("")
+                    self.console.print(
+                        f"[bold yellow]Suggestion:[/bold yellow] The next runnable phase is "
+                        f"[bold green]Phase {next_runnable}[/bold green]. Run:"
+                    )
+                    self.console.print(
+                        f"  [cyan]python3 main.py run --phase {next_runnable}[/cyan]"
+                    )
+                    self.console.print("")
+                    self.console.print(
+                        f"[dim]Or start from Phase {next_runnable} to run the remaining chain:[/dim]"
+                    )
+                    self.console.print(
+                        f"  [cyan]python3 main.py run --from-phase {next_runnable}[/cyan]"
+                    )
+                    self.console.print(
+                        f"[dim](Use --force to skip dependency checks)[/dim]"
+                    )
+                return False
         else:
             phases = [1, 2, 3, 4, 5, "fp", 6]
             if to_phase:
                 phases = [p for p in phases if (isinstance(p, int) and p <= to_phase) or p == "fp"]
-        
+
         self.logger.info(
             f"Starting pipeline for {self.target}", silent=True,
             phases=phases,
@@ -170,9 +244,26 @@ class PipelineOrchestrator:
                 if self.console:
                     self.console.print(f"  [green]✓[/green] [dim]{phase_name}[/dim] — [bold]{output.count} items[/bold]")
 
+                # Auto-generate phase report
+                if isinstance(phase_key, int):
+                    self._generate_phase_report(phase_key)
+
 
             except PhaseException as e:
-                self.logger.error(f"Phase {phase_key} failed: {e}", silent=True)
+                error_msg = str(e)
+                self.logger.error(f"Phase {phase_key} failed: {error_msg}", silent=True)
+                
+                # Show error in console
+                if self.console:
+                    self.console.print("")
+                    self.console.print(
+                        Panel(
+                            f"[bold red]{error_msg}[/bold red]",
+                            title=f"[bold red]Phase {phase_key} Failed[/bold red]",
+                            border_style="red",
+                            padding=(1, 2),
+                        )
+                    )
                 return False
             except Exception as e:
                 self.logger.error(f"Unexpected error in Phase {phase_key}: {e}", silent=True)
@@ -198,10 +289,53 @@ class PipelineOrchestrator:
     async def run_phase(self, phase_number: int) -> bool:
         """Run a single phase."""
         return await self.run_pipeline(single_phase=phase_number)
-    
+
     def get_status(self) -> Dict[str, Any]:
         """Get current workspace status."""
         return self.workspace.get_status()
+
+    def _generate_phase_report(self, phase: int) -> None:
+        """Auto-generate HTML and Markdown reports after phase completion."""
+        try:
+            from reports.generator import ReportGenerator
+            gen = ReportGenerator(self.workspace)
+            report_dir = Path("reports")
+            report_dir.mkdir(exist_ok=True)
+
+            # HTML report
+            html_path = report_dir / f"{self.target}_phase{phase}_report.html"
+            gen.generate_phase_html(phase, str(html_path))
+
+            # Markdown report
+            md_path = report_dir / f"{self.target}_phase{phase}_report.md"
+            gen.generate_phase_markdown(phase, str(md_path))
+
+            self.logger.info(f"Reports generated: {html_path}, {md_path}")
+        except Exception as e:
+            self.logger.debug(f"Failed to generate phase {phase} report: {e}")
+
+    def _format_log_entry(self, log_line: str) -> str:
+        """Format a JSON log entry for display."""
+        try:
+            import json
+            entry = json.loads(log_line)
+            level = entry.get('level', 'INFO')
+            message = entry.get('message', '')
+            tool = entry.get('tool', '')
+            
+            # Colorize based on level
+            level_color = {
+                'INFO': 'dim',
+                'WARNING': 'yellow',
+                'ERROR': 'red',
+                'DEBUG': 'dim white'
+            }.get(level, 'dim')
+            
+            if tool:
+                return f"[{level_color}]{level}[/{level_color}] {message} [dim]({tool})[/dim]"
+            return f"[{level_color}]{level}[/{level_color}] {message}"
+        except (json.JSONDecodeError, ValueError):
+            return f"[dim]{log_line[:100]}[/dim]"
 
 
 async def run_pipeline(

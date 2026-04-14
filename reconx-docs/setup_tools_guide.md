@@ -58,12 +58,12 @@ sudo bash setup_tools.sh --wordlists # Wordlists only
 
 ### Compiled/Binary Tools
 
-| Tool | Source | Purpose |
-|------|--------|---------|
-| nmap | apt/yum/pacman | Network scanner |
-| masscan | robertdavidgraham/masscan | Fast port scanner |
-| feroxbuster | epi052/feroxbuster | Content discovery |
-| x8 | Sh1Yo/x8 | Hidden parameter discovery |
+| Tool | Source | Purpose | Notes |
+|------|--------|---------|-------|
+| nmap | nmap.org/dist | Network scanner | `setcap cap_net_raw,cap_net_admin+eip` applied — no sudo needed |
+| masscan | robertdavidgraham/masscan | Fast port scanner | `setcap cap_net_raw+ep` applied — no sudo needed |
+| feroxbuster | epi052/feroxbuster | Content discovery | |
+| x8 | Sh1Yo/x8 | Hidden parameter discovery | |
 
 ### Wordlists
 

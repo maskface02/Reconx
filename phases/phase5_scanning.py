@@ -10,7 +10,7 @@ from pathlib import Path
 from core.workspace import Workspace
 from core.models import Finding, SecretType, PhaseOutput
 from core.utils import redact_secrets
-from .base import BasePhase
+from .base import BasePhase, PhaseException
 
 
 class Phase5Scanning(BasePhase):
@@ -30,24 +30,47 @@ class Phase5Scanning(BasePhase):
     async def run(self) -> PhaseOutput:
         """Execute Phase 5: Scanning."""
         self.logger.phase_start(self.name, target=self.target)
-        
-        # Load URLs
+
+        # Load Phase 4 output (directories and parameters)
+        phase4_data = self.workspace.load_phase_output(4)
+        if phase4_data is None:
+            error_msg = (
+                f"Phase 4 output not found (phase4_output.json). "
+                f"Phase 5 requires Phase 4 to complete first for directory/parameter enumeration data. "
+                f"Run: python3 main.py run --phase 4"
+            )
+            self.logger.error(error_msg)
+            raise PhaseException(error_msg)
+
+        # Load supporting files from Phase 3/4
+        urls_file = self.workspace.workspace_path / "urls.txt"
+        all_urls_file = self.workspace.workspace_path / "all_urls.txt"
+
+        if not urls_file.exists() and not all_urls_file.exists():
+            error_msg = (
+                f"Phase 3/4 output files not found (urls.txt, all_urls.txt). "
+                f"Phase 5 requires Phase 3 and Phase 4 to complete first. "
+                f"Run: python3 main.py run --from-phase 3"
+            )
+            self.logger.error(error_msg)
+            raise PhaseException(error_msg)
+
         urls = self.workspace.load_text_file("urls.txt")
         all_urls = self.workspace.load_text_file("all_urls.txt")
         js_files = self.workspace.load_text_file("js_files.txt")
-        
-        if not urls and not all_urls:
-            self.logger.warning("No URLs found for scanning")
-            return PhaseOutput(
-                phase=self.name,
-                count=0,
-                output_file=str(self.workspace.get_phase_output(5))
-            )
-        
+
+        # Extract enumerated directories and parameters from Phase 4
+        phase4_dirs = [item for item in phase4_data if item.get('type') == 'directory']
+        phase4_params = [item for item in phase4_data if item.get('type') == 'parameter']
+
+        self.logger.info(
+            f"Using {len(phase4_dirs)} directories and {len(phase4_params)} parameters from Phase 4"
+        )
+
         # Run 5a and 5b in parallel
         secrets_task = self._hunt_secrets(js_files)
-        vulns_task = self._scan_vulnerabilities(urls or all_urls)
-        
+        vulns_task = self._scan_vulnerabilities(urls or all_urls, phase4_dirs, phase4_params)
+
         secrets, vulns = await asyncio.gather(secrets_task, vulns_task)
         
         # Combine findings
@@ -104,7 +127,7 @@ class Phase5Scanning(BasePhase):
             '-o', 'cli'
         ]
         
-        result = await self.runner.run(f'secretfinder_{js_url}', cmd)
+        result = await self.runner.run('secretfinder', cmd)
         
         secrets = []
         if result.success:
@@ -191,7 +214,7 @@ class Phase5Scanning(BasePhase):
         
         return secrets
     
-    async def _scan_vulnerabilities(self, urls: List[str]) -> List[Finding]:
+    async def _scan_vulnerabilities(self, urls: List[str], phase4_dirs: List[dict], phase4_params: List[dict]) -> List[Finding]:
         """5b: Scan for vulnerabilities using various tools."""
         all_vulns = []
         
@@ -211,6 +234,15 @@ class Phase5Scanning(BasePhase):
         if self.tool_available('nuclei'):
             vulns = await self._run_nuclei_exposures(urls_file)
             all_vulns.extend(vulns)
+        
+        # Scan enumerated directories from Phase 4 for targeted vulnerabilities
+        if phase4_dirs:
+            dir_urls = [d.get('path', d.get('url', '')) for d in phase4_dirs if d.get('path') or d.get('url')]
+            self.logger.info(f"Scanning {len(dir_urls)} enumerated directories for vulnerabilities")
+        
+        # Scan parameter-rich endpoints from Phase 4 for injection vulnerabilities
+        if phase4_params:
+            self.logger.info(f"Scanning {len(phase4_params)} discovered parameters for injection vulnerabilities")
         
         # Nikto scanning
         if self.tool_available('nikto'):
@@ -298,7 +330,7 @@ class Phase5Scanning(BasePhase):
             '-o', str(output_file)
         ]
         
-        result = await self.runner.run(f'nikto_{url}', cmd, output_file)
+        result = await self.runner.run('nikto', cmd, output_file)
         
         vulns = []
         if result.success and output_file.exists():

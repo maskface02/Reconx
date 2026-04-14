@@ -144,8 +144,13 @@ remove_tools() {
     
     for tool in "${TOOLS[@]}"; do
         local tool_path="$USER_BIN/$tool"
-        
+
         if [[ -f "$tool_path" || -L "$tool_path" ]]; then
+            # Remove capabilities before deleting masscan/nmap
+            if [[ "$tool" == "masscan" || "$tool" == "nmap" ]] && command -v setcap &>/dev/null; then
+                setcap -r "$tool_path" 2>/dev/null || true
+            fi
+
             if rm -f "$tool_path" 2>/dev/null; then
                 echo "  Removed: $tool"
                 removed_count=$((removed_count + 1))

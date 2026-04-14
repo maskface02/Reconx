@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 from core.workspace import Workspace
 from core.models import Parameter, PhaseOutput
 from core.utils import deduplicate_lines, is_in_scope
-from .base import BasePhase
+from .base import BasePhase, PhaseException
 
 
 class Phase4Enumeration(BasePhase):
@@ -32,11 +32,23 @@ class Phase4Enumeration(BasePhase):
     async def run(self) -> PhaseOutput:
         """Execute Phase 4: Enumeration."""
         self.logger.phase_start(self.name, target=self.target)
-        
+
         # Load URLs from Phase 3
+        urls_file = self.workspace.workspace_path / "all_urls.txt"
+        if not urls_file.exists():
+            error_msg = (
+                f"Phase 3 output not found (all_urls.txt). "
+                f"Phase 4 requires Phase 3 to complete first. "
+                f"Run: python3 main.py run --phase 3"
+            )
+            self.logger.error(error_msg)
+            raise PhaseException(error_msg)
+
         urls = self.workspace.load_text_file("all_urls.txt")
         if not urls:
-            self.logger.warning("No URLs found from Phase 3")
+            self.logger.warning("all_urls.txt is empty, Phase 3 found no URLs to crawl")
+            # Save empty output so phase is marked as completed
+            self.workspace.save_phase_output(4, [])
             return PhaseOutput(
                 phase=self.name,
                 count=0,
@@ -140,7 +152,7 @@ class Phase4Enumeration(BasePhase):
             '-of', 'json'
         ]
         
-        result = await self.runner.run(f'ffuf_{url}', cmd, output_file)
+        result = await self.runner.run('ffuf', cmd, output_file)
         
         dirs = set()
         if result.success and output_file.exists():
@@ -169,7 +181,7 @@ class Phase4Enumeration(BasePhase):
             '-o', str(output_file)
         ]
         
-        result = await self.runner.run(f'feroxbuster_{url}', cmd, output_file)
+        result = await self.runner.run('feroxbuster', cmd, output_file)
         
         dirs = set()
         if result.success and output_file.exists():
@@ -261,7 +273,7 @@ class Phase4Enumeration(BasePhase):
             '-oJ', str(output_file)
         ]
         
-        result = await self.runner.run(f'arjun_{url}', cmd, output_file)
+        result = await self.runner.run('arjun', cmd, output_file)
         
         params = []
         if result.success and output_file.exists():
@@ -298,7 +310,7 @@ class Phase4Enumeration(BasePhase):
             '-o', str(output_file)
         ]
         
-        result = await self.runner.run(f'x8_{url}', cmd, output_file)
+        result = await self.runner.run('x8', cmd, output_file)
         
         params = []
         if result.success and output_file.exists():
@@ -336,7 +348,7 @@ class Phase4Enumeration(BasePhase):
                 str(all_urls_file)
             ]
             
-            result = await self.runner.run(f'gf_{pattern}', cmd, output_file)
+            result = await self.runner.run('gf', cmd, output_file)
             
             if result.success:
                 self.logger.tool_end(f'gf_{pattern}', str(output_file))

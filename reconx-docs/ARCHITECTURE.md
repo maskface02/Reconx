@@ -224,9 +224,42 @@ The framework uses a **layered timeout strategy**:
 
 1. **Tool Not Found**: Log warning, skip tool, continue
 2. **Tool Timeout**: Kill process, log error, continue
-3. **Zero Output**: Log warning, continue to next phase
-4. **Malformed JSON**: Attempt repair, re-run if needed
-5. **Phase Exception**: Stop pipeline, report error
+3. **Zero Output**: Log warning, save empty output file, continue to next phase
+4. **Missing Phase Dependencies**: Raise `PhaseException` with actionable message showing exact command to run
+5. **Malformed JSON**: Attempt repair, re-run if needed
+6. **Phase Exception**: Stop pipeline, show red error panel with guidance
+
+## Auto-Resume System
+
+The framework automatically detects which phase to start from:
+
+```
+Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5 → FP Filter → Phase 6
+  ↓         ↓         ↓         ↓         ↓          ↓          ↓
+config   phase1    phase2    phase3    phase4   phase5+   confirmed_
+         .json     .json     .json     .json    .json    findings.json
+                   +urls.txt           +all_urls +js_files
+                                       .txt      .txt
+```
+
+**Behavior:**
+- `python3 main.py run` → Auto-detects next runnable phase, skips completed ones
+- `python3 main.py run --phase 4` → Fails with clear error if Phase 3 output missing
+- `python3 main.py run --force` → Re-runs requested phase regardless of cache
+
+## Interrupted Run Detection
+
+The system analyzes `orchestrator.log` to detect if a previous run was interrupted:
+- Finds phase_start events without matching phase_end
+- Shows target, stopped phase, and last 5 log entries
+- Automatically resumes from the next runnable phase
+
+## Tool Capabilities (No Sudo at Runtime)
+
+masscan and nmap use Linux capabilities (`cap_net_raw`) instead of requiring sudo:
+- `setcap cap_net_raw+ep ~/.local/bin/masscan`
+- Applied automatically by `setup_tools.sh`
+- Both tools run like any other tool — no privilege escalation needed
 
 ## Security Considerations
 

@@ -11,7 +11,7 @@ from urllib.parse import urlparse, urljoin
 from core.workspace import Workspace
 from core.models import CrawledUrl, PhaseOutput
 from core.utils import deduplicate_lines, is_in_scope
-from .base import BasePhase
+from .base import BasePhase, PhaseException
 
 
 class Phase3Crawling(BasePhase):
@@ -33,9 +33,21 @@ class Phase3Crawling(BasePhase):
         self.logger.phase_start(self.name, target=self.target)
 
         # Load URLs from Phase 2
+        urls_file = self.workspace.workspace_path / "urls.txt"
+        if not urls_file.exists():
+            error_msg = (
+                f"Phase 2 output not found (urls.txt). "
+                f"Phase 3 requires Phase 2 to complete first. "
+                f"Run: python3 main.py run --phase 2"
+            )
+            self.logger.error(error_msg)
+            raise PhaseException(error_msg)
+
         urls = self.workspace.load_text_file("urls.txt")
         if not urls:
-            self.logger.warning("No URLs found from Phase 2")
+            self.logger.warning("urls.txt is empty, Phase 2 found no live URLs")
+            # Save empty output so phase is marked as completed
+            self.workspace.save_phase_output(3, [])
             return PhaseOutput(
                 phase=self.name,
                 count=0,
@@ -151,7 +163,7 @@ class Phase3Crawling(BasePhase):
             '-o', str(output_file)
         ]
 
-        result = await self.runner.run(f'katana_{url}', cmd, output_file)
+        result = await self.runner.run('katana', cmd, output_file)
 
         urls = []
         if result.success and output_file.exists():
@@ -172,7 +184,7 @@ class Phase3Crawling(BasePhase):
             '--depth', '5'
         ]
 
-        result = await self.runner.run(f'gospider_{url}', cmd)
+        result = await self.runner.run('gospider', cmd)
 
         urls = []
         if result.success and output_dir.exists():
@@ -197,14 +209,14 @@ class Phase3Crawling(BasePhase):
             '-plain'
         ]
 
-        result = await self.runner.run(f'hakrawler_{url}', cmd, output_file)
+        result = await self.runner.run('hakrawler', cmd, output_file)
 
         urls = []
         if result.success:
-            urls = [line.strip() for line in result.stdout.split('') 
+            urls = [line.strip() for line in result.stdout.split('\n')
                     if line.strip() and line.strip().startswith('http')]
             with open(output_file, 'w') as f:
-                f.write(''.join(urls))
+                f.write('\n'.join(urls))
 
         return urls
 
@@ -221,10 +233,10 @@ class Phase3Crawling(BasePhase):
 
         urls = []
         if result.success:
-            urls = [line.strip() for line in result.stdout.split('') 
+            urls = [line.strip() for line in result.stdout.split('\n')
                     if line.strip() and line.strip().startswith('http')]
             with open(output_file, 'w') as f:
-                f.write(''.join(urls))
+                f.write('\n'.join(urls))
             self.logger.tool_end('waybackurls', str(output_file), len(urls))
 
         return urls
@@ -242,10 +254,10 @@ class Phase3Crawling(BasePhase):
 
         urls = []
         if result.success:
-            urls = [line.strip() for line in result.stdout.split('') 
+            urls = [line.strip() for line in result.stdout.split('\n')
                     if line.strip() and line.strip().startswith('http')]
             with open(output_file, 'w') as f:
-                f.write(''.join(urls))
+                f.write('\n'.join(urls))
             self.logger.tool_end('gau', str(output_file), len(urls))
 
         return urls
@@ -261,10 +273,10 @@ class Phase3Crawling(BasePhase):
                 '-o', 'cli'
             ]
 
-            result = await self.runner.run(f'linkfinder_{js_url}', cmd)
+            result = await self.runner.run('linkfinder', cmd)
 
             if result.success:
-                relative_paths = [line.strip() for line in result.stdout.split('') if line.strip()]
+                relative_paths = [line.strip() for line in result.stdout.split('\n') if line.strip()]
 
                 # Extract base URL from the JS file URL
                 parsed = urlparse(js_url)

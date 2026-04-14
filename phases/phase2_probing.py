@@ -10,7 +10,7 @@ from pathlib import Path
 from core.workspace import Workspace
 from core.models import HttpProbe, PhaseOutput
 from core.utils import deduplicate_lines
-from .base import BasePhase
+from .base import BasePhase, PhaseException
 
 
 class Phase2Probing(BasePhase):
@@ -28,16 +28,17 @@ class Phase2Probing(BasePhase):
     async def run(self) -> PhaseOutput:
         """Execute Phase 2: HTTP probing."""
         self.logger.phase_start(self.name, target=self.target)
-        
+
         # Load Phase 1 output
         phase1_data = self.workspace.load_phase_output(1)
         if not phase1_data:
-            self.logger.warning("No Phase 1 output found, cannot proceed")
-            return PhaseOutput(
-                phase=self.name,
-                count=0,
-                output_file=str(self.workspace.get_phase_output(2))
+            error_msg = (
+                f"Phase 1 output not found (phase1_output.json). "
+                f"Phase 2 requires Phase 1 to complete first. "
+                f"Run: python3 main.py run --phase 1"
             )
+            self.logger.error(error_msg)
+            raise PhaseException(error_msg)
         
         # Extract subdomains
         subdomains = [item['subdomain'] for item in phase1_data if item.get('alive', False)]
@@ -148,9 +149,9 @@ class Phase2Probing(BasePhase):
         with open(ips_file, 'w') as f:
             f.write('\n'.join(ips))
         
-        # Try masscan first
+        # Try masscan first (requires cap_net_raw capability, set by setup_tools.sh)
         masscan_output = self.workspace.get_raw_file("masscan_out.json")
-        
+
         if self.tool_available('masscan'):
             cmd = [
                 self.get_tool_path('masscan'),
@@ -159,10 +160,10 @@ class Phase2Probing(BasePhase):
                 '--rate', '1000',
                 '-oJ', str(masscan_output)
             ]
-            
+
             result = await self.runner.run('masscan', cmd, masscan_output)
-            
-            if result.success and masscan_output.exists():
+
+            if result.success and masscan_output.exists() and masscan_output.stat().st_size > 0:
                 try:
                     with open(masscan_output, 'r') as f:
                         data = json.load(f)
@@ -173,30 +174,76 @@ class Phase2Probing(BasePhase):
                                 results[ip] = ports
                     self.logger.tool_end('masscan', str(masscan_output), len(results))
                 except json.JSONDecodeError:
-                    pass
+                    self.logger.warning("masscan output was not valid JSON")
+            else:
+                self.logger.warning("masscan produced no output — falling back to nmap")
         else:
             self.logger.tool_skipped('masscan', 'not installed')
         
-        # Run nmap on discovered open ports
-        if results and self.tool_available('nmap'):
+        # Run nmap on discovered open ports (or directly on IPs if masscan failed/skipped)
+        if self.tool_available('nmap'):
             open_ports_file = self.workspace.get_raw_file("open_ports.txt")
             with open(open_ports_file, 'w') as f:
-                for ip, ports in results.items():
-                    for port in ports:
-                        f.write(f"{ip}:{port}\n")
-            
-            nmap_output = self.workspace.get_raw_file("nmap_out.json")
+                if results:
+                    # masscan found ports — scan only those
+                    for ip, ports in results.items():
+                        for port in ports:
+                            f.write(f"{ip}:{port}\n")
+                else:
+                    # masscan failed/skipped — nmap all IPs directly (top ports)
+                    for ip in ips:
+                        f.write(f"{ip}\n")
+
+            nmap_output = self.workspace.get_raw_file("nmap_out.xml")
             cmd = [
                 self.get_tool_path('nmap'),
                 '-sV',
+                '--top-ports', '1000',
                 '-iL', str(open_ports_file),
-                '-oJ', str(nmap_output)
+                '-oX', str(nmap_output),
+                '--max-retries', '2',
+                '-T4'
             ]
-            
-            result = await self.runner.run('nmap', cmd, nmap_output)
-            
-            if result.success:
-                self.logger.tool_end('nmap', str(nmap_output), len(results))
+
+            # nmap needs more time for service version detection on many hosts
+            nmap_runner = AsyncRunner(
+                rate_limit=self.runner.rate_limit,
+                timeout=600  # 10 minutes for nmap
+            )
+            result = await nmap_runner.run('nmap', cmd, nmap_output)
+
+            if result.success and nmap_output.exists():
+                # Parse XML output to extract port info
+                try:
+                    import time
+                    # Wait a moment for nmap to finish writing the file
+                    time.sleep(1)
+                    import xml.etree.ElementTree as ET
+                    tree = ET.parse(nmap_output)
+                    root = tree.getroot()
+                    nmap_results = []
+                    for host in root.findall('.//host'):
+                        addr = host.find('address')
+                        ip_addr = addr.get('addr', '') if addr is not None else ''
+                        for port in host.findall('.//port'):
+                            port_id = port.get('portid', '')
+                            state = port.find('state')
+                            service = port.find('service')
+                            state_name = state.get('state', '') if state is not None else ''
+                            if state_name == 'open':
+                                svc_name = service.get('name', '') if service is not None else ''
+                                svc_product = service.get('product', '') if service is not None else ''
+                                nmap_results.append({
+                                    'ip': ip_addr,
+                                    'port': port_id,
+                                    'service': svc_name,
+                                    'product': svc_product
+                                })
+                    results.update({r['ip']: [int(r['port'])] for r in nmap_results})
+                except Exception:
+                    pass
+
+            self.logger.tool_end('nmap', str(nmap_output), len(ips))
         else:
             self.logger.tool_skipped('nmap', 'not installed')
         
@@ -222,7 +269,7 @@ class Phase2Probing(BasePhase):
                 '-o', str(output_file)
             ]
             
-            result = await self.runner.run(f'wafw00f_{url}', cmd, output_file)
+            result = await self.runner.run('wafw00f', cmd, output_file)
             
             if result.success and output_file.exists():
                 try:

@@ -139,88 +139,81 @@ cmd = [
 
 **Command:**
 ```bash
-assetfinder --subs-only
+assetfinder --subs-only {target}
 ```
 
 **Flags:**
 - `--subs-only`: Output only subdomains (no domains)
-- Input is provided via **stdin pipe** (target written to temp file)
+- `{target}`: Domain passed as command-line argument
 
 **Example:**
 ```python
-# Write target to temp input file
-input_file = self.workspace.get_raw_file("assetfinder_input.txt")
-with open(input_file, 'w') as f:
-    f.write(self.target)
-
 cmd = [
     self.get_tool_path('assetfinder'),
-    '--subs-only'
+    '--subs-only',
+    self.target                    # e.g., "apple.com"
 ]
 
-# Assetfinder reads from stdin, outputs to stdout (no -o flag)
-result = await self.runner.run('assetfinder', cmd, input_file=input_file)
+result = await self.runner.run('assetfinder', cmd, output_file)
 
-# Results captured from stdout, written to file manually
 # Output saved to: workspaces/apple.com/raw/assetfinder.txt
 ```
 
-**Output Handling:**
-```python
-# stdout captured via PIPE, then written to file
-subdomains = [line.strip() for line in result.stdout.split('\n') if line.strip()]
-```
+**Output Format:** Plain text, one subdomain per line
 
-**Timeout Handling:** Assetfinder uses stdin pipe for input. The base runner provides
-a **300-second timeout**. Since assetfinder only outputs to stdout (no `-o` flag),
-results are captured via PIPE to avoid buffering hangs.
+**Timeout Handling:** Uses base runner with **300-second timeout**. Results written to output file.
 
 ---
 
 ### 5. dnsx
 
-**Purpose:** DNS resolution - verify which subdomains resolve to IPs
+**Purpose:** DNS resolution - verify which subdomains resolve to IPs (extracts IPs for port scanning)
 
 **Command:**
 ```bash
-dnsx -l {input_file} -silent -o {output_file}
+dnsx -l {input_file} -a -resp -silent -json -o {output_file}
 ```
 
 **Flags:**
 - `-l {input_file}`: File with subdomains to resolve
+- `-a`: Query A records (IP addresses)
+- `-resp`: Show response data
 - `-silent`: Show only resolvable subdomains
+- `-json`: JSON output for parsing
 - `-o {output_file}`: Output file
 
 **Example:**
 ```python
-# After merging all discovered subdomains
 cmd = [
     self.get_tool_path('dnsx'),
-    '-l', str(merged_file),      # "workspaces/apple.com/raw/subdomains_merged.txt"
-    '-silent',
-    '-o', str(output_file)       # "workspaces/apple.com/raw/subdomains_resolved.txt"
+    '-l', str(merged_file),
+    '-a', '-resp',
+    '-silent', '-json',
+    '-o', str(output_file)
 ]
 
-# Actual execution:
-# dnsx -l workspaces/apple.com/raw/subdomains_merged.txt \
-#      -silent \
-#      -o workspaces/apple.com/raw/subdomains_resolved.txt
+# Parse JSON output to extract both subdomains AND their IPs
+resolved = []
+ip_map = {}  # subdomain -> IP
+with open(output_file, 'r') as f:
+    for line in f:
+        data = json.loads(line)
+        host = data.get('host', '').split(' (')[0]  # Strip "(fqdn)" suffix
+        a_records = data.get('a', [])
+        if host and '(netblock)' not in host:
+            resolved.append(host)
+            if a_records:
+                ip_map[host] = a_records[0]  # First A record
 ```
 
-**Input Format:** Plain text subdomains (from merged discovery results)
-```
-dev.apple.com
-api.apple.com
-test.apple.com
+**Output Format:** JSON Lines
+```json
+{"host":"api.apple.com","a":["17.253.144.10"],"status_code":0}
 ```
 
-**Output Format:** Only resolvable subdomains
-```
-api.apple.com
-dev.apple.com
-```
+**Fallback:** If dnsx not installed, assumes all subdomains are valid and passes them through (no IPs extracted).
 
-**Fallback:** If dnsx not installed, assumes all subdomains are valid and passes them through.
+**Note:** Netblock entries (e.g., `52.19.178.0/24 (netblock) --> contains --> ...`) are filtered out — only real subdomain hostnames are kept.
 
 ---
 
@@ -475,11 +468,15 @@ with open(output_file, 'r') as f:
 masscan -iL {ips_file} -p1-65535 --rate 1000 -oJ {output_file}
 ```
 
+**Note:** Requires `cap_net_raw` capability (set by `setup_tools.sh`). No sudo needed at runtime.
+
 **Flags:**
 - `-iL {ips_file}`: Input file with IP addresses
 - `-p1-65535`: Scan all ports (1-65535)
-- `--rate 1000`: Packets per second (adjust for network)
+- `--rate 1000`: Packets per second
 - `-oJ {output_file}`: Output in JSON format
+
+**Fallback:** If masscan fails or produces no output, nmap falls back to scanning all IPs directly with `--top-ports 1000`.
 
 **Example:**
 ```python
@@ -534,48 +531,28 @@ for entry in data:
 
 ### 3. nmap
 
-**Purpose:** Service version detection on discovered open ports
+**Purpose:** Service version detection on discovered open ports (or all IPs if masscan failed)
 
 **Command:**
 ```bash
-nmap -sV -iL {open_ports_file} -oJ {output_file}
+nmap -sV --top-ports 1000 -iL {ips_file} -oX {output_file} --max-retries 2 -T4
 ```
+
+**Note:** Uses `-oX` (XML) output with custom parser. Timeout is **600 seconds** (10 min) via dedicated runner.
 
 **Flags:**
 - `-sV`: Probe open ports to determine service/version info
-- `-iL {open_ports_file}`: Input file with `IP:port` format
-- `-oJ {output_file}`: Output in JSON format
+- `--top-ports 1000`: Scan only the 1000 most common ports
+- `-iL {ips_file}`: Input file with IP addresses
+- `-oX {output_file}`: XML output (parsed for open ports/services)
+- `--max-retries 2`: Limit retransmissions for speed
+- `-T4`: Aggressive timing
 
-**Example:**
-```python
-# First, create open_ports.txt from masscan results
-with open(open_ports_file, 'w') as f:
-    for ip, ports in masscan_results.items():
-        for port in ports:
-            f.write(f"{ip}:{port}\n")
+**Fallback Behavior:**
+- If masscan found open ports → nmap scans only those specific ports
+- If masscan failed/skipped → nmap scans all IPs directly with `--top-ports 1000`
 
-cmd = [
-    self.get_tool_path('nmap'),
-    '-sV',
-    '-iL', str(open_ports_file),     # "workspaces/apple.com/raw/open_ports.txt"
-    '-oJ', str(output_file)           # "workspaces/apple.com/raw/nmap_out.json"
-]
-
-# Actual execution:
-# nmap -sV -iL workspaces/apple.com/raw/open_ports.txt \
-#      -oJ workspaces/apple.com/raw/nmap_out.json
-```
-
-**Input Format:** `IP:port` pairs
-```
-17.253.144.10:80
-17.253.144.10:443
-17.253.144.10:8080
-```
-
-**Output Format:** JSON (nmap's JSON output)
-
-**Note:** Slow on many ports. Only runs if masscan found open ports.
+**Output Parsing:** XML is parsed via `xml.etree.ElementTree` to extract IP, port, service name, and product info.
 
 ---
 

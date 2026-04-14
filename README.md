@@ -83,6 +83,20 @@ python3 main.py run --force
 python3 main.py run --config apple-config.yaml
 ```
 
+### Auto-Resume & Dependency Detection
+
+The framework automatically detects which phase to start from based on existing output files:
+
+```bash
+# If Phases 1-2 are complete, this auto-resumes from Phase 3
+python3 main.py run
+
+# Try to run a phase with missing dependencies → shows clear error
+python3 main.py run --phase 4
+# Error: Phase 4 cannot run yet. Required phase output files are missing.
+# Suggestion: The next runnable phase is Phase 3.
+```
+
 ### Manual Review
 ```bash
 python3 main.py review
@@ -97,7 +111,8 @@ python3 main.py report --format html --output report.html
 ```bash
 # Show status for config's target
 python3 main.py status
-
+# Shows: phases completed, findings count, next runnable phase,
+# and interrupted run warnings if applicable
 ```
 
 ### Clear Workspace

@@ -48,10 +48,10 @@ show_banner() {
  \__|  \__| \______/  \_______| \______/ \__|  \__|\__|  \__|
 BANNER
   printf "${NC}\n"
-  echo "   ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓"
-  echo "   ┃${PURPLE}${BOLD}  R3c0nX — Unified Reconnaissance Framework${NC}                    ┃"
-  echo "   ┃${BLUE}  https://github.com/maskface02/reconx${NC}                        ┃"
-  echo "   ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛"
+  printf "${GREEN}${BOLD}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${NC}\n"
+  printf "${GREEN}${BOLD}┃${NC}${PURPLE}${BOLD}  R3c0nX - Unified Reconnaissance Framework${NC}                  ${GREEN}${BOLD}┃${NC}\n"
+  printf "${GREEN}${BOLD}┃${NC}${BLUE}  https://github.com/maskface02/reconx${NC}                       ${GREEN}${BOLD}┃${NC}\n"
+  printf "${GREEN}${BOLD}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}\n"
   echo ""
   if [ "$EUID" -ne 0 ]; then
     err "This script must be run with sudo"
@@ -60,8 +60,15 @@ BANNER
   fi
 }
 
-section()     { echo -e "\n${PURPLE}${BOLD}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${NC}\n${PURPLE}${BOLD}┃${NC}  ${BOLD}$1${NC}\n${PURPLE}${BOLD}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}"; }
-sub_section() { echo -e "\n${CYAN}${BOLD}▶ $1${NC}"; }
+section()     {
+  local title="$1"
+  local width=63
+  local padding=$((width - 4 - ${#title}))
+  printf "\n${PURPLE}${BOLD}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${NC}\n"
+  printf "${PURPLE}${BOLD}┃${NC}  ${BOLD}${title}${NC}%${padding}s${PURPLE}${BOLD}┃${NC}\n" ""
+  printf "${PURPLE}${BOLD}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${NC}\n"
+}
+sub_section() { printf "\n  ${CYAN}${BOLD}▶ $1${NC}\n"; }
 info()        { echo -e "  ${BLUE}[INFO]${NC} $1"; }
 ok()          { echo -e "  ${GREEN}✓${NC} $1"; }
 warn()        { echo -e "  ${YELLOW}[!]${NC} $1"; }
@@ -197,7 +204,7 @@ install_go() {
   section "GO COMPILER"
 
   if [ -x "$GO_DIR/bin/go" ]; then
-    info "Go already installed: $("$GO_DIR/bin/go" version)"
+    ok "Go already installed: $("$GO_DIR/bin/go" version)"
     return
   fi
 
@@ -254,6 +261,13 @@ install_go_tools() {
 
   for name in "${!tools[@]}"; do
     local url="${tools[$name]}"
+
+    # Skip if already installed
+    if [ -f "$INSTALL_DIR/$name" ]; then
+      ok "$name already installed → $("$INSTALL_DIR/$name" --version 2>&1 | head -1 || echo "binary present")"
+      continue
+    fi
+
     sub_section "Installing $name..."
 
     su - "$SUDO_USER_NAME" -c \
@@ -297,45 +311,53 @@ install_static() {
   [ "$(uname -m)" = "aarch64" ] && arch="aarch64"
 
   # feroxbuster
-  sub_section "Installing feroxbuster..."
-  local fb_tmp
-  fb_tmp=$(mktemp /tmp/feroxbuster.XXXXXX.tar.gz)
-  if wget -q --show-progress \
-      "https://github.com/epi052/feroxbuster/releases/latest/download/${arch}-linux-feroxbuster.tar.gz" \
-      -O "$fb_tmp"; then
-    # Extract only the binary, then move — avoids path ambiguity
-    tar xzf "$fb_tmp" -C /tmp feroxbuster 2>/dev/null || tar xzf "$fb_tmp" -C /tmp
-    mv /tmp/feroxbuster "$INSTALL_DIR/"
-    chown "$SUDO_USER_NAME:$SUDO_USER_NAME" "$INSTALL_DIR/feroxbuster"
-    ok "feroxbuster installed"
+  if [ -f "$INSTALL_DIR/feroxbuster" ]; then
+    ok "feroxbuster already installed → $("$INSTALL_DIR/feroxbuster" -V 2>&1 | head -1 || echo "binary present")"
   else
-    warn "feroxbuster download failed"
+    sub_section "Installing feroxbuster..."
+    local fb_tmp
+    fb_tmp=$(mktemp /tmp/feroxbuster.XXXXXX.tar.gz)
+    if wget -q --show-progress \
+        "https://github.com/epi052/feroxbuster/releases/latest/download/${arch}-linux-feroxbuster.tar.gz" \
+        -O "$fb_tmp"; then
+      # Extract only the binary, then move — avoids path ambiguity
+      tar xzf "$fb_tmp" -C /tmp feroxbuster 2>/dev/null || tar xzf "$fb_tmp" -C /tmp
+      mv /tmp/feroxbuster "$INSTALL_DIR/"
+      chown "$SUDO_USER_NAME:$SUDO_USER_NAME" "$INSTALL_DIR/feroxbuster"
+      ok "feroxbuster installed"
+    else
+      warn "feroxbuster download failed"
+    fi
+    rm -f "$fb_tmp"
   fi
-  rm -f "$fb_tmp"
 
   # x8
-  sub_section "Installing x8..."
-  local x8_tag
-  x8_tag=$(curl -fsSL "https://api.github.com/repos/Sh1Yo/x8/releases/latest" \
-    | grep '"tag_name"' | cut -d'"' -f4) || x8_tag=""
-  if [ -n "$x8_tag" ]; then
-    local x8_tmp
-    x8_tmp=$(mktemp /tmp/x8.XXXXXX.gz)
-    if wget -q --show-progress \
-        "https://github.com/Sh1Yo/x8/releases/download/${x8_tag}/${arch}-linux-x8.gz" \
-        -O "$x8_tmp"; then
-      gunzip -f "$x8_tmp"
-      local x8_bin="${x8_tmp%.gz}"
-      chmod +x "$x8_bin"
-      mv "$x8_bin" "$INSTALL_DIR/x8"
-      chown "$SUDO_USER_NAME:$SUDO_USER_NAME" "$INSTALL_DIR/x8"
-      ok "x8 installed"
-    else
-      warn "x8 download failed"
-      rm -f "$x8_tmp"
-    fi
+  if [ -f "$INSTALL_DIR/x8" ]; then
+    ok "x8 already installed → $("$INSTALL_DIR/x8" --version 2>&1 | head -1 || echo "binary present")"
   else
-    warn "Could not resolve x8 release tag"
+    sub_section "Installing x8..."
+    local x8_tag
+    x8_tag=$(curl -fsSL "https://api.github.com/repos/Sh1Yo/x8/releases/latest" \
+      | grep '"tag_name"' | cut -d'"' -f4) || x8_tag=""
+    if [ -n "$x8_tag" ]; then
+      local x8_tmp
+      x8_tmp=$(mktemp /tmp/x8.XXXXXX.gz)
+      if wget -q --show-progress \
+          "https://github.com/Sh1Yo/x8/releases/download/${x8_tag}/${arch}-linux-x8.gz" \
+          -O "$x8_tmp"; then
+        gunzip -f "$x8_tmp"
+        local x8_bin="${x8_tmp%.gz}"
+        chmod +x "$x8_bin"
+        mv "$x8_bin" "$INSTALL_DIR/x8"
+        chown "$SUDO_USER_NAME:$SUDO_USER_NAME" "$INSTALL_DIR/x8"
+        ok "x8 installed"
+      else
+        warn "x8 download failed"
+        rm -f "$x8_tmp"
+      fi
+    else
+      warn "Could not resolve x8 release tag"
+    fi
   fi
 }
 
@@ -347,7 +369,7 @@ install_compiled() {
   sub_section "Building masscan from source..."
   local masscan_tmp
   if [ -x "$INSTALL_DIR/masscan" ]; then
-    info "masscan  already installed";
+    info "masscan already installed"
   else
     masscan_tmp=$(mktemp -d /tmp/masscan.XXXXXX)
     git clone --depth 1 https://github.com/robertdavidgraham/masscan.git "$masscan_tmp" 2>/dev/null
@@ -355,6 +377,15 @@ install_compiled() {
     cp "$masscan_tmp/bin/masscan" "$INSTALL_DIR/"
     chown "$SUDO_USER_NAME:$SUDO_USER_NAME" "$INSTALL_DIR/masscan"
     rm -rf "$masscan_tmp"
+  fi
+
+  # Set capabilities so masscan can use raw sockets without sudo (always check, even on existing installs)
+  if command -v setcap &>/dev/null; then
+    setcap cap_net_raw+ep "$INSTALL_DIR/masscan" 2>/dev/null \
+      && ok "  masscan capabilities set (cap_net_raw — no sudo needed)" \
+      || warn "  setcap failed — masscan may need sudo"
+  else
+    warn "  setcap not found — masscan may need sudo"
   fi
 
   # ── nmap ───────────────────────────────────────────────────────────────────
@@ -468,17 +499,21 @@ install_python() {
     2>/dev/null || true
 
   sub_section "Installing arjun via pipx..."
-  su - "$SUDO_USER_NAME" -c \
-    "export PATH=\"\$HOME/.local/bin:\$PATH\"; pipx install arjun --force" 2>/dev/null \
-  || su - "$SUDO_USER_NAME" -c \
-    "export PATH=\"\$HOME/.local/bin:\$PATH\"; python3 -m pipx install arjun --force" \
-  || warn "arjun install failed"
-
   if [ -f "$SUDO_USER_HOME/.local/bin/arjun" ]; then
-    chown "$SUDO_USER_NAME:$SUDO_USER_NAME" "$SUDO_USER_HOME/.local/bin/arjun"
-    ok "arjun → $SUDO_USER_HOME/.local/bin/arjun"
+    ok "arjun already installed → $SUDO_USER_HOME/.local/bin/arjun"
   else
-    warn "arjun binary not found after install"
+    su - "$SUDO_USER_NAME" -c \
+      "export PATH=\"\$HOME/.local/bin:\$PATH\"; pipx install arjun --force" 2>/dev/null \
+    || su - "$SUDO_USER_NAME" -c \
+      "export PATH=\"\$HOME/.local/bin:\$PATH\"; python3 -m pipx install arjun --force" \
+    || warn "arjun install failed"
+
+    if [ -f "$SUDO_USER_HOME/.local/bin/arjun" ]; then
+      chown "$SUDO_USER_NAME:$SUDO_USER_NAME" "$SUDO_USER_HOME/.local/bin/arjun"
+      ok "arjun → $SUDO_USER_HOME/.local/bin/arjun"
+    else
+      warn "arjun binary not found after install"
+    fi
   fi
 
   sub_section "Installing Python libraries to user site-packages..."
@@ -511,11 +546,18 @@ install_git_tools() {
     local repo="$2"
     local entrypoint="$3"
 
-    sub_section "Installing $name..."
-
     local tool_dir="$OPT_DIR/$name"
     local venv_dir="$tool_dir/.venv"
     local wrapper="$INSTALL_DIR/$name"
+
+    # Skip if wrapper already exists and venv is present
+    if [ -x "$wrapper" ] && [ -d "$venv_dir" ]; then
+      ok "$name already installed → $wrapper"
+      return
+    fi
+
+    sub_section "Installing $name..."
+
     local pip="$venv_dir/bin/pip"
     local python="$venv_dir/bin/python3"
 
@@ -606,15 +648,19 @@ install_git_tools() {
   install_py_tool "secretfinder" "m4ll0k/SecretFinder"       "SecretFinder.py"
 
   # ── nikto (Perl — no venv needed) ────────────────────────────────────────
-  sub_section "Installing nikto..."
-  rm -rf "${OPT_DIR:?}/nikto"
-  git clone --depth 1 "https://github.com/sullo/nikto.git" "$OPT_DIR/nikto" 2>&1 | tail -3
-  chown -R "$SUDO_USER_NAME:$SUDO_USER_NAME" "$OPT_DIR/nikto"
-  printf '#!/bin/bash\nexec perl "%s/program/nikto.pl" "$@"\n' \
-    "$OPT_DIR/nikto" > "$INSTALL_DIR/nikto"
-  chmod +x "$INSTALL_DIR/nikto"
-  chown "$SUDO_USER_NAME:$SUDO_USER_NAME" "$INSTALL_DIR/nikto"
-  ok "nikto → $INSTALL_DIR/nikto"
+  if [ -f "$INSTALL_DIR/nikto" ]; then
+    ok "nikto already installed → $INSTALL_DIR/nikto"
+  else
+    sub_section "Installing nikto..."
+    rm -rf "${OPT_DIR:?}/nikto"
+    git clone --depth 1 "https://github.com/sullo/nikto.git" "$OPT_DIR/nikto" 2>&1 | tail -3
+    chown -R "$SUDO_USER_NAME:$SUDO_USER_NAME" "$OPT_DIR/nikto"
+    printf '#!/bin/bash\nexec perl "%s/program/nikto.pl" "$@"\n' \
+      "$OPT_DIR/nikto" > "$INSTALL_DIR/nikto"
+    chmod +x "$INSTALL_DIR/nikto"
+    chown "$SUDO_USER_NAME:$SUDO_USER_NAME" "$INSTALL_DIR/nikto"
+    ok "nikto → $INSTALL_DIR/nikto"
+  fi
 }
 
 # ── Wordlists ────────────────────────────────────────────────────────────────
@@ -626,10 +672,11 @@ install_wordlists() {
     git clone --depth 1 https://github.com/danielmiessler/SecLists.git \
       "$WORDLIST_DIR/SecLists" 2>&1 | tail -5
   else
-    info "SecLists exists, pulling updates..."
-    git -C "$WORDLIST_DIR/SecLists" pull --depth 1 2>&1 | tail -3
+    git -C "$WORDLIST_DIR/SecLists" fetch --depth 1 -q 2>/dev/null
+    git -C "$WORDLIST_DIR/SecLists" reset --hard origin/master -q 2>/dev/null \
+      || ok "SecLists up to date"
   fi
-  chown -R "$SUDO_USER_NAME:$SUDO_USER_NAME" "$WORDLIST_DIR/SecLists"
+  chown -R "$SUDO_USER_NAME:$SUDO_USER_NAME" "$WORDLIST_DIR/SecLists" 2>/dev/null
   ok "SecLists ready"
 
   sub_section "PayloadsAllTheThings..."
