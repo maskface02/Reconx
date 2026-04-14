@@ -1,2 +1,0 @@
-# Nmap 7.99 scan initiated Mon Apr 13 00:40:51 2026 as: nmap -sV --top-ports 1000 -iL workspaces/spendesk.com/raw/open_ports.txt -oJ workspaces/spendesk.com/raw/nmap_out.json
-Unable to split netmask from target expression: "workspaces/spendesk.com/raw/nmap_out.json"

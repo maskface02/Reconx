@@ -19,7 +19,7 @@
 ## 🏗️ Architecture
 
 ```
-Phase 1: Discovery     → subfinder, amass, assetfinder, crt.sh, chaos
+Phase 1: Discovery     → subfinder, amass, assetfinder, crt.sh, chaos, dnsx
     ↓
 Phase 2: Probing       → httpx, masscan, nmap, wafw00f
     ↓
