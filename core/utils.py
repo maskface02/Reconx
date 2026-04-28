@@ -1,6 +1,7 @@
 """
 Utility functions for reconx framework.
 """
+import json
 import re
 import hashlib
 from urllib.parse import urlparse
@@ -150,17 +151,24 @@ def parse_subfinder_output(output: str) -> List[str]:
 
 def parse_amass_output(output: str) -> List[str]:
     """Parse amass output into list of subdomains."""
+    import re
     subdomains = []
+    # Match valid domain names (excluding IP addresses and CIDR blocks)
+    domain_regex = re.compile(r'^([a-zA-Z0-9][a-zA-Z0-9-]*\.)+[a-zA-Z]{2,}$')
+    
     for line in output.split('\n'):
         line = line.strip()
-        if line and not line.startswith('#'):
-            # Amass can output in various formats, extract domain
-            parts = line.split()
-            for part in parts:
-                if '.' in part and not part.startswith('http'):
-                    subdomains.append(part)
-                    break
-    return subdomains
+        if not line or line.startswith('#'):
+            continue
+            
+        # Amass output often starts with the subdomain, followed by spaces or (FQDN)
+        parts = line.split()
+        if parts:
+            first_part = parts[0]
+            if domain_regex.match(first_part):
+                subdomains.append(first_part)
+                
+    return list(set(subdomains))
 
 
 def parse_httpx_jsonl(output: str) -> List[Dict[str, Any]]:
@@ -275,4 +283,3 @@ def safe_json_load(filepath: Path, default: Any = None) -> Any:
         return default
 
 
-import json

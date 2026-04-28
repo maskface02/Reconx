@@ -149,7 +149,7 @@ class ToolStatusTracker:
             spinner = self._next_spinner()
             lines.append(f"[bold cyan]{spinner}[/bold cyan] [dim]Running:[/dim] [white]{', '.join(running)}[/white]")
         for tool, status in completed[-10:]:
-            lines.append(f"  [green]✓[/green] [dim]{tool}[/dim] — {status}")
+            lines.append(f"  [dim]{tool}[/dim] — {status}")
 
         return "\n".join(lines) if lines else "[dim]Initializing...[/dim]"
 

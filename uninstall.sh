@@ -22,6 +22,7 @@ WORDLISTS_DIR="$HOME/.local/share/wordlists"
 GO_DIR="$HOME/.local/go"
 GO_CACHE_DIR="$HOME/.local/go_cache"
 ARJUN_PIPX_DIR="$HOME/.local/share/pipx/arjun"
+NUCLEI_TEMPLATES="$HOME/nuclei-templates"
 
 # ── Tool List ────────────────────────────────────────────────────────────────
 declare -a TOOLS=(
@@ -30,7 +31,7 @@ declare -a TOOLS=(
     "nuclei" "masscan" "feroxbuster" "x8" "gf" "gau"
     "sqlmap" "ghauri" "gitdorker" "paramspider" "nikto"
     "wafw00f" "linkfinder" "xsstrike" "jwt-tool" "secretfinder"
-    "ncat" "nmap" "nping" "arjun" "trufflehog"
+    "ncat" "nmap" "nping" "arjun" "trufflehog" "crt_v2.sh"
 )
 
 # ── Git Tools List ──────────────────────────────────────────────────────────
@@ -115,6 +116,7 @@ show_warning() {
     [[ -d "$GO_DIR" ]] && echo "  - Go ($GO_DIR/)"
     [[ -d "$GO_CACHE_DIR" ]] && echo "  - Go cache ($GO_CACHE_DIR/)"
     [[ -d "$ARJUN_PIPX_DIR" ]] && echo "  - Arjun pipx ($ARJUN_PIPX_DIR/)"
+    [[ -d "$NUCLEI_TEMPLATES" ]] && echo "  - Nuclei templates ($NUCLEI_TEMPLATES/)"
     
     echo ""
     echo -e "${YELLOW}Are you sure you want to continue?${NC}"
@@ -144,8 +146,13 @@ remove_tools() {
     
     for tool in "${TOOLS[@]}"; do
         local tool_path="$USER_BIN/$tool"
-        
+
         if [[ -f "$tool_path" || -L "$tool_path" ]]; then
+            # Remove capabilities before deleting masscan/nmap
+            if [[ "$tool" == "masscan" || "$tool" == "nmap" ]] && command -v setcap &>/dev/null; then
+                setcap -r "$tool_path" 2>/dev/null || true
+            fi
+
             if rm -f "$tool_path" 2>/dev/null; then
                 echo "  Removed: $tool"
                 removed_count=$((removed_count + 1))
@@ -161,6 +168,11 @@ remove_tools() {
             fi
         else
             not_found_count=$((not_found_count + 1))
+        fi
+        
+        # Also remove crtsh repo if crt_v2.sh wrapper is removed
+        if [[ "$tool" == "crt_v2.sh" ]] && [[ -f "$tool_path" || -L "$tool_path" ]]; then
+            rm -rf "$HOME/.local/opt/crtsh" 2>/dev/null || true
         fi
     done
     
@@ -226,6 +238,12 @@ remove_arjun_pipx() {
     safe_remove "$ARJUN_PIPX_DIR" "Arjun (pipx)"
 }
 
+remove_nuclei_templates() {
+    echo ""
+    log_info "Removing Nuclei templates from $NUCLEI_TEMPLATES..."
+    safe_remove "$NUCLEI_TEMPLATES" "Nuclei templates"
+}
+
 # ── Main ────────────────────────────────────────────────────────────────────
 main() {
     show_banner
@@ -240,6 +258,7 @@ main() {
     remove_go
     remove_go_cache
     remove_arjun_pipx
+    remove_nuclei_templates
     
     echo ""
     log_success "Uninstall complete!"

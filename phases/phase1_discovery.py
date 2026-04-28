@@ -2,6 +2,8 @@
 Phase 1: Subdomain & Asset Discovery
 Builds a complete, deduplicated, alive-verified list of subdomains.
 """
+import re
+
 import json
 import asyncio
 from typing import List, Any
@@ -9,7 +11,7 @@ from pathlib import Path
 
 from core.workspace import Workspace
 from core.models import Subdomain, PhaseOutput
-from core.utils import deduplicate_lines, parse_crtsh_json, is_in_scope
+from core.utils import deduplicate_lines, is_in_scope, parse_amass_output
 from core.logger import get_logger
 from core.runner import AsyncRunner
 from .base import BasePhase, PhaseException
@@ -25,7 +27,7 @@ class Phase1Discovery(BasePhase):
     def __init__(self, workspace: Workspace, config: dict):
         super().__init__(workspace, config)
         self.target = config['target']
-        self.scope = config.get('scope', [f"*.{self.target}", self.target])
+        self.scope = config.get('scope') or [f"*.{self.target}", self.target]
         self.exclude = config.get('exclude', [])
     
     async def run(self) -> PhaseOutput:
@@ -89,20 +91,27 @@ class Phase1Discovery(BasePhase):
         
         self.logger.info(f"Discovered {len(all_subdomains)} unique subdomains")
         
-        # Save merged subdomains for DNS resolution
+        # Save merged subdomains for DNS resolution (deduplicated)
         merged_file = self.workspace.get_raw_file("subdomains_merged.txt")
+        unique_subs = sorted(set(all_subdomains))
         with open(merged_file, 'w') as f:
-            f.write('\n'.join(sorted(all_subdomains)))
+            f.write('\n'.join(unique_subs))
         
         # DNS resolution with dnsx
+        self.logger.tool_start('dnsx', f'resolving {len(unique_subs)} subdomains')
         resolved = await self._resolve_dns(merged_file)
         
-        # Alive check with httpx
-        live_subdomains = await self._check_alive(resolved)
+        # Deduplicate resolved subdomains before httpx
+        unique_resolved = sorted(set(resolved))
         
-        # Build Subdomain objects
+        # Alive check with httpx
+        self.logger.tool_start('httpx', f'checking {len(unique_resolved)} subdomains')
+        live_subdomains = await self._check_alive(unique_resolved)
+        
+        # Build Subdomain objects (deduplicate first)
+        unique_live = list(dict.fromkeys(live_subdomains))
         subdomain_objects = []
-        for sub in live_subdomains:
+        for sub in unique_live:
             subdomain_objects.append(Subdomain(
                 subdomain=sub,
                 sources=source_map.get(sub, []),
@@ -135,7 +144,7 @@ class Phase1Discovery(BasePhase):
         # Subfinder needs more time - use a dedicated runner
         subfinder_runner = AsyncRunner(
             rate_limit=self.runner.rate_limit,
-            timeout=300
+            timeout=180
         )
         result = await subfinder_runner.run('subfinder', cmd, output_file)
 
@@ -172,30 +181,35 @@ class Phase1Discovery(BasePhase):
         # Amass needs more time - use a dedicated runner with higher timeout
         amass_runner = AsyncRunner(
             rate_limit=self.runner.rate_limit,
-            timeout=300
+            timeout=180
         )
         result = await amass_runner.run('amass_passive', cmd, output_file)
-
+        
         # Read output file even if the process timed out - amass writes incrementally
-        if output_file.exists():
+        if output_file.exists() and output_file.stat().st_size > 0:
             with open(output_file, 'r') as f:
-                subdomains = [line.strip() for line in f if line.strip()]
+                content = f.read()
+            subdomains = parse_amass_output(content)
             if subdomains:
                 self.logger.tool_end('amass_passive', str(output_file), len(subdomains))
                 return subdomains
-
+            # No valid domains found in output - log warning
+            self.logger.warning(f"amass_passive: no valid subdomains found in output (got DNS records instead)")
+            self.logger.tool_end('amass_passive', str(output_file), 0)
+        
         # Fallback: parse stdout if output file is empty
         if result.stdout:
-            subdomains = [line.strip() for line in result.stdout.split('\n') if line.strip()]
+            subdomains = parse_amass_output(result.stdout)
             if subdomains:
                 if output_file.exists():
                     with open(output_file, 'w') as f:
                         f.write('\n'.join(subdomains))
                 self.logger.tool_end('amass_passive', str(output_file), len(subdomains))
                 return subdomains
-
+        
         if result.error_message:
-            self.logger.error(f"amass_passive failed: {result.error_message}")
+            self.logger.warning(f"amass_passive failed: {result.error_message}")
+        self.logger.tool_end('amass_passive', str(output_file), 0)
         return []
     
     async def _run_amass_active(self) -> List[str]:
@@ -212,30 +226,35 @@ class Phase1Discovery(BasePhase):
         # Amass needs more time - use a dedicated runner
         amass_runner = AsyncRunner(
             rate_limit=self.runner.rate_limit,
-            timeout=300
+            timeout=180
         )
         result = await amass_runner.run('amass_active', cmd, output_file)
-
+        
         # Read output file even if the process timed out - amass writes incrementally
-        if output_file.exists():
+        if output_file.exists() and output_file.stat().st_size > 0:
             with open(output_file, 'r') as f:
-                subdomains = [line.strip() for line in f if line.strip()]
+                content = f.read()
+            subdomains = parse_amass_output(content)
             if subdomains:
                 self.logger.tool_end('amass_active', str(output_file), len(subdomains))
                 return subdomains
-
+            # No valid domains found in output - log warning
+            self.logger.warning(f"amass_active: no valid subdomains found in output (got DNS records instead)")
+            self.logger.tool_end('amass_active', str(output_file), 0)
+        
         # Fallback: parse stdout if output file is empty
         if result.stdout:
-            subdomains = [line.strip() for line in result.stdout.split('\n') if line.strip()]
+            subdomains = parse_amass_output(result.stdout)
             if subdomains:
                 if output_file.exists():
                     with open(output_file, 'w') as f:
                         f.write('\n'.join(subdomains))
                 self.logger.tool_end('amass_active', str(output_file), len(subdomains))
                 return subdomains
-
+        
         if result.error_message:
-            self.logger.error(f"amass_active failed: {result.error_message}")
+            self.logger.warning(f"amass_active failed: {result.error_message}")
+        self.logger.tool_end('amass_active', str(output_file), 0)
         return []
     
     async def _run_assetfinder(self) -> List[str]:
@@ -270,20 +289,46 @@ class Phase1Discovery(BasePhase):
         return []
     
     async def _run_crtsh(self) -> List[str]:
-        """Query crt.sh for certificate transparency logs."""
-        output_file = self.workspace.get_raw_file("crtsh.json")
-
-        url = f"https://crt.sh/?q=%25.{self.target}&output=json"
-
-        result = await self.runner.fetch_url(url, tool_name="crt.sh")
+        """Query crt.sh using crt.sh tool."""
+        output_file = self.workspace.get_raw_file("crt.sh.txt")
         
+        # Path to crt.sh tool output directory
+        crt_output_dir = Path.home() / ".local" / "opt" / "crtsh" / "output"
+        crt_output_file = crt_output_dir / f"domain.{self.target}.txt"
+        
+        # Use dedicated runner with 180s timeout for crt.sh
+        crt_runner = AsyncRunner(
+            rate_limit=self.runner.rate_limit,
+            timeout=180
+        )
+        
+        cmd = ['crt.sh', '-d', self.target]
+        
+        await crt_runner.run('crt.sh', cmd)
+        
+        # Read from output file instead of stdout
         subdomains = []
-        if result['success']:
-            subdomains = parse_crtsh_json(result['body'])
-            # Save raw output
-            with open(output_file, 'w') as f:
-                f.write(result['body'])
-            self.logger.tool_end('crtsh', str(output_file), len(subdomains))
+        if crt_output_file.exists():
+            with open(crt_output_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('*'):
+                        subdomains.append(line)
+            
+            subdomains = list(set(subdomains))
+            
+            if subdomains:
+                # Save raw output to workspace
+                with open(output_file, 'w') as f:
+                    f.write('\n'.join(subdomains))
+                self.logger.tool_end('crt.sh', str(output_file), len(subdomains))
+            else:
+                self.logger.tool_end('crt.sh', str(output_file), 0)
+                self.logger.warning("crt.sh returned 0 items (API may be down)")
+        else:
+            # No output file created - likely API error
+            self.logger.tool_end('crt.sh', str(output_file), 0)
+            self.logger.warning("crt.sh returned 0 items (API may be down)")
         
         return subdomains
     
@@ -350,7 +395,7 @@ class Phase1Discovery(BasePhase):
         
         result = await self.runner.run('dnsx', cmd, output_file)
         
-        if result.success and output_file.exists():
+        if result.success and output_file.exists() and output_file.stat().st_size > 0:
             with open(output_file, 'r') as f:
                 resolved = [line.strip() for line in f if line.strip()]
             self.logger.tool_end('dnsx', str(output_file), len(resolved))
@@ -358,7 +403,9 @@ class Phase1Discovery(BasePhase):
         
         # Fallback to input
         with open(input_file, 'r') as f:
-            return [line.strip() for line in f if line.strip()]
+            resolved = [line.strip() for line in f if line.strip()]
+        self.logger.tool_end('dnsx', str(input_file), len(resolved))
+        return resolved
     
     async def _check_alive(self, subdomains: List[str]) -> List[str]:
         """Check which subdomains are alive using httpx."""
@@ -373,22 +420,59 @@ class Phase1Discovery(BasePhase):
             self.logger.tool_skipped('httpx', 'not installed - assuming all resolved are alive')
             return subdomains
         
+        # Use dedicated runner with 180s timeout for httpx
+        httpx_runner = AsyncRunner(
+            rate_limit=self.runner.rate_limit,
+            timeout=180
+        )
         cmd = [
             self.get_tool_path('httpx'),
             '-l', str(input_file),
             '-silent',
-            '-o', str(output_file)
+            '-o', str(output_file),
+            '-sc',
+            '-cl',
+            '-ct', '5'
         ]
         
-        result = await self.runner.run('httpx', cmd, output_file)
+        result = await httpx_runner.run('httpx', cmd, output_file)
         
-        if result.success and output_file.exists():
+        if result.success and output_file.exists() and output_file.stat().st_size > 0:
+            ansi_pattern = re.compile(r'\x1b\[[0-9;]*m')
             with open(output_file, 'r') as f:
-                live = [line.strip() for line in f if line.strip()]
+                live = []
+                for line in f:
+                    # First strip ANSI codes
+                    line = ansi_pattern.sub('', line).strip()
+                    # Check if it looks like a valid httpx line (starts with http and contains status code pattern)
+                    if line and line.startswith('http') and '[' in line:
+                        url = line.split('[')[0].strip()
+                        live.append(url)
+            # Deduplicate live URLs before returning
+            live = list(dict.fromkeys(live))
             self.logger.tool_end('httpx', str(output_file), len(live))
             return live
         
-        return subdomains
+        # Fallback: try reading from stdout if output file is empty
+        if result.stdout:
+            ansi_pattern = re.compile(r'\x1b\[[0-9;]*m')
+            live = []
+            for line in result.stdout.split('\n'):
+                line = ansi_pattern.sub('', line).strip()
+                if line and line.startswith('http') and '[' in line:
+                    url = line.split('[')[0].strip()
+                    live.append(url)
+            if live:
+                live = list(dict.fromkeys(live))
+                with open(output_file, 'w') as f:
+                    for url in live:
+                        f.write(f"{url}\n")
+                self.logger.tool_end('httpx', str(output_file), len(live))
+                return live
+        
+        # If httpx failed, return empty list
+        self.logger.warning(f"httpx failed: {result.error_message or 'no output'}")
+        return []
     
     def parse_output(self, raw: str) -> List[Any]:
         """Parse raw output into Subdomain objects."""

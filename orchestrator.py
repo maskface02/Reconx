@@ -157,6 +157,8 @@ class PipelineOrchestrator:
                             output = await phase.run()
                         finally:
                             status_task.cancel()
+                        if live:
+                            live.update(tool_tracker.render())
                 else:
                     output = await phase.run()
 
@@ -168,7 +170,7 @@ class PipelineOrchestrator:
 
                 # Show phase completion
                 if self.console:
-                    self.console.print(f"  [green]✓[/green] [dim]{phase_name}[/dim] — [bold]{output.count} items[/bold]")
+                    self.console.print(f"\n[bold]Phase {phase_name}:[/bold] [bold cyan]{output.count} items[/bold cyan]")
 
 
             except PhaseException as e:

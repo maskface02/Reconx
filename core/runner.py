@@ -28,7 +28,7 @@ class ToolResult:
 class AsyncRunner:
     """Async subprocess runner for external tools."""
     
-    def __init__(self, rate_limit: int = 50, timeout: int = 300):
+    def __init__(self, rate_limit: int = 50, timeout: int = 180):
         self.rate_limit = rate_limit
         self.timeout = timeout
         self.semaphore = asyncio.Semaphore(rate_limit)
