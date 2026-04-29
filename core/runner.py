@@ -2,6 +2,7 @@
 Async subprocess wrapper for running external tools.
 """
 import asyncio
+import os
 import shutil
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Callable
@@ -28,7 +29,7 @@ class ToolResult:
 class AsyncRunner:
     """Async subprocess runner for external tools."""
     
-    def __init__(self, rate_limit: int = 50, timeout: int = 180):
+    def __init__(self, rate_limit: int = 50, timeout: int = 300):
         self.rate_limit = rate_limit
         self.timeout = timeout
         self.semaphore = asyncio.Semaphore(rate_limit)
@@ -76,13 +77,18 @@ class AsyncRunner:
                 if input_file:
                     stdin_target = open(input_file, 'r')
                 
+                # Merge env with system env if custom env provided
+                merged_env = env
+                if env:
+                    merged_env = {**os.environ, **env}
+                
                 # Run the process
                 process = await asyncio.create_subprocess_exec(
                     *command,
                     stdout=stdout_target if isinstance(stdout_target, int) else stdout_target,
                     stderr=asyncio.subprocess.PIPE,
                     stdin=stdin_target,
-                    env=env
+                    env=merged_env
                 )
                 
                 # Wait for completion with timeout

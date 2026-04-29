@@ -112,7 +112,7 @@ def run(
     threads = cfg.get('threads', 20)
     scope = cfg.get('scope', [])
     exclude = cfg.get('exclude', [])
-    chaos_set = bool(cfg.get('chaos_api_key'))
+    chaos_set = bool(cfg.get('PDCP_API_KEY'))
     github_set = bool(cfg.get('github_token'))
 
     summary = Table.grid(padding=(0, 2))
@@ -123,7 +123,7 @@ def run(
     summary.add_row("Exclude", ", ".join(exclude) if exclude else "[dim]None[/dim]")
     summary.add_row("Rate Limit", str(rate_limit))
     summary.add_row("Threads", str(threads))
-    summary.add_row("Chaos API", "[green]Yes[/green]" if chaos_set else "[red]No[/red]")
+    summary.add_row("PDCP API", "[green]Yes[/green]" if chaos_set else "[red]No[/red]")
     summary.add_row("GitHub Token", "[green]Yes[/green]" if github_set else "[red]No[/red]")
 
     console.print(Panel(summary, title="[bold green]Configuration[/bold green]", border_style="green", padding=(0, 1)))
@@ -387,11 +387,11 @@ nuclei_templates: /usr/share/nuclei-templates/
 # Optional: Interact.sh server for blind SSRF testing
 interactsh_server: ""
 
+# Optional: PDCP API key for subdomain discovery and DNS lookups
+PDCP_API_KEY: ""
+
 # Optional: GitHub token for gitdorker
 github_token: ""
-
-# Optional: Chaos API key for subdomain discovery
-chaos_api_key: ""
 '''
     
     config_path = Path("config.yaml")

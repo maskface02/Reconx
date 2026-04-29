@@ -29,6 +29,7 @@ class Phase1Discovery(BasePhase):
         self.target = config['target']
         self.scope = config.get('scope') or [f"*.{self.target}", self.target]
         self.exclude = config.get('exclude', [])
+        self.dns_data = {}  # Store DNS resolution data (ip, cname, asn)
     
     async def run(self) -> PhaseOutput:
         """Execute Phase 1: Subdomain discovery."""
@@ -39,47 +40,59 @@ class Phase1Discovery(BasePhase):
         
         # Run all discovery tools in parallel
         tasks = []
+        tool_names = []
+        source_map: dict = {}  # subdomain -> list of sources
         
         # Subfinder
         if self.tool_available('subfinder'):
             tasks.append(self._run_subfinder())
+            tool_names.append('subfinder')
         else:
             self.logger.tool_skipped('subfinder', 'not installed')
         
         # Amass passive
         if self.tool_available('amass'):
             tasks.append(self._run_amass_passive())
+            tool_names.append('amass_passive')
             tasks.append(self._run_amass_active())
+            tool_names.append('amass_active')
         else:
             self.logger.tool_skipped('amass', 'not installed')
         
         # Assetfinder
         if self.tool_available('assetfinder'):
             tasks.append(self._run_assetfinder())
+            tool_names.append('assetfinder')
         else:
             self.logger.tool_skipped('assetfinder', 'not installed')
         
         # crt.sh (always runs, no tool needed)
         tasks.append(self._run_crtsh())
+        tool_names.append('crt.sh')
         
         # Chaos API (if key configured)
-        if self.config.get('chaos_api_key'):
+        if self.config.get('PDCP_API_KEY'):
             tasks.append(self._run_chaos())
+            tool_names.append('chaos')
         
         # Wait for all discovery tasks
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        # Collect results
-        for result in results:
+        # Collect results with source tracking
+        for idx, result in enumerate(results):
             if isinstance(result, Exception):
                 self.logger.error(f"Discovery task failed: {result}")
                 continue
+            tool_name = tool_names[idx] if idx < len(tool_names) else 'unknown'
             for subdomain in result:
                 subdomain = subdomain.lower().strip()
                 if subdomain and is_in_scope(subdomain, self.scope, self.exclude):
                     all_subdomains.add(subdomain)
+                    # Track sources properly
                     if subdomain not in source_map:
                         source_map[subdomain] = []
+                    if tool_name not in source_map[subdomain]:
+                        source_map[subdomain].append(tool_name)
         
         if not all_subdomains:
             self.logger.warning("No subdomains discovered")
@@ -112,9 +125,33 @@ class Phase1Discovery(BasePhase):
         unique_live = list(dict.fromkeys(live_subdomains))
         subdomain_objects = []
         for sub in unique_live:
+            # Normalize URL to hostname for DNS lookup
+            hostname = sub.replace('https://', '').replace('http://', '').rstrip('/')
+            
+            # Get DNS data for this subdomain
+            dns_info = self.dns_data.get(hostname, {})
+            
+            # Convert list to comma-separated string for IP field (model expects str, not list)
+            ip_value = dns_info.get('ip')
+            if isinstance(ip_value, list) and ip_value:
+                ip_value = ip_value[0]
+            
+            cname_value = dns_info.get('cname')
+            if isinstance(cname_value, list) and cname_value:
+                cname_value = cname_value[0]
+            
+            asn_value = dns_info.get('asn')
+            if isinstance(asn_value, list) and asn_value:
+                asn_value = str(asn_value[0])
+            elif isinstance(asn_value, dict):
+                asn_value = str(asn_value.get('asn', ''))
+            
             subdomain_objects.append(Subdomain(
                 subdomain=sub,
-                sources=source_map.get(sub, []),
+                ip=ip_value,
+                cname=cname_value,
+                asn=asn_value,
+                sources=source_map.get(hostname, []),
                 alive=True
             ))
         
@@ -144,7 +181,7 @@ class Phase1Discovery(BasePhase):
         # Subfinder needs more time - use a dedicated runner
         subfinder_runner = AsyncRunner(
             rate_limit=self.runner.rate_limit,
-            timeout=180
+            timeout=300
         )
         result = await subfinder_runner.run('subfinder', cmd, output_file)
 
@@ -181,7 +218,7 @@ class Phase1Discovery(BasePhase):
         # Amass needs more time - use a dedicated runner with higher timeout
         amass_runner = AsyncRunner(
             rate_limit=self.runner.rate_limit,
-            timeout=180
+            timeout=300
         )
         result = await amass_runner.run('amass_passive', cmd, output_file)
         
@@ -226,7 +263,7 @@ class Phase1Discovery(BasePhase):
         # Amass needs more time - use a dedicated runner
         amass_runner = AsyncRunner(
             rate_limit=self.runner.rate_limit,
-            timeout=180
+            timeout=300
         )
         result = await amass_runner.run('amass_active', cmd, output_file)
         
@@ -299,7 +336,7 @@ class Phase1Discovery(BasePhase):
         # Use dedicated runner with 180s timeout for crt.sh
         crt_runner = AsyncRunner(
             rate_limit=self.runner.rate_limit,
-            timeout=180
+            timeout=300
         )
         
         cmd = ['crt.sh', '-d', self.target]
@@ -335,7 +372,7 @@ class Phase1Discovery(BasePhase):
     async def _run_chaos(self) -> List[str]:
         """Query Chaos dataset API."""
         output_file = self.workspace.get_raw_file("chaos.txt")
-        api_key = self.config.get('chaos_api_key')
+        api_key = self.config.get('PDCP_API_KEY')
 
         if not api_key:
             return []
@@ -386,18 +423,66 @@ class Phase1Discovery(BasePhase):
             with open(input_file, 'r') as f:
                 return [line.strip() for line in f if line.strip()]
         
+        # Get PDCP API key from config for ASN lookups
+        pdcp_config_key = 'PDCP_API_KEY'
+        
+        # Set up environment with API key if available
+        env = None
+        pdcp_api_key = self.config.get(pdcp_config_key)
+        if pdcp_api_key:
+            env = {'PDCP_API_KEY': pdcp_api_key}
+        
         cmd = [
             self.get_tool_path('dnsx'),
             '-l', str(input_file),
             '-silent',
+            '-re',
+            '-asn',
+            '-cname',
+            '-a',
+            '-aaaa',
             '-o', str(output_file)
         ]
         
-        result = await self.runner.run('dnsx', cmd, output_file)
+        result = await self.runner.run('dnsx', cmd, output_file, env=env)
+        
+        resolved = []
+        self.dns_data = {}  # Store DNS data for later use
         
         if result.success and output_file.exists() and output_file.stat().st_size > 0:
+            seen = set()
+            
             with open(output_file, 'r') as f:
-                resolved = [line.strip() for line in f if line.strip()]
+                for line in f:
+                    # Line format: "domain [A] [IP] [ASXXXX, name, country]"
+                    # ANSI codes are literal strings like [35m, [32m, [0m
+                    line = line.strip()
+                    
+                    if not line:
+                        continue
+                    
+                    # Extract subdomain (first token before any bracket)
+                    subdomain = line.split()[0] if line.split() else ''
+                    if not subdomain or subdomain in seen:
+                        continue
+                    seen.add(subdomain)
+                    
+                    # Extract IP - find first IP pattern
+                    ip_match = re.search(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', line)
+                    ip_value = ip_match.group(1) if ip_match else None
+                    
+                    # Extract ASN
+                    asn_match = re.search(r'(AS\d+)', line)
+                    asn_value = asn_match.group(1) if asn_match else None
+                    
+                    resolved.append(subdomain)
+                    self.dns_data[subdomain] = {
+                        'ip': ip_value,
+                        'aaaa': None,
+                        'cname': None,
+                        'asn': asn_value,
+                    }
+            
             self.logger.tool_end('dnsx', str(output_file), len(resolved))
             return resolved
         
@@ -423,12 +508,13 @@ class Phase1Discovery(BasePhase):
         # Use dedicated runner with 180s timeout for httpx
         httpx_runner = AsyncRunner(
             rate_limit=self.runner.rate_limit,
-            timeout=180
+            timeout=300
         )
         cmd = [
             self.get_tool_path('httpx'),
             '-l', str(input_file),
             '-silent',
+            '-no-color',
             '-o', str(output_file),
             '-sc',
             '-cl',
@@ -438,14 +524,13 @@ class Phase1Discovery(BasePhase):
         result = await httpx_runner.run('httpx', cmd, output_file)
         
         if result.success and output_file.exists() and output_file.stat().st_size > 0:
-            ansi_pattern = re.compile(r'\x1b\[[0-9;]*m')
             with open(output_file, 'r') as f:
                 live = []
                 for line in f:
-                    # First strip ANSI codes
-                    line = ansi_pattern.sub('', line).strip()
-                    # Check if it looks like a valid httpx line (starts with http and contains status code pattern)
-                    if line and line.startswith('http') and '[' in line:
+                    line = line.strip()
+                    # Format now: "url [status_code]" without colors
+                    # Check if line looks valid: starts with http and contains status code in brackets
+                    if line and line.startswith('http') and '[' in line and ']' in line:
                         url = line.split('[')[0].strip()
                         live.append(url)
             # Deduplicate live URLs before returning
@@ -455,23 +540,19 @@ class Phase1Discovery(BasePhase):
         
         # Fallback: try reading from stdout if output file is empty
         if result.stdout:
-            ansi_pattern = re.compile(r'\x1b\[[0-9;]*m')
             live = []
             for line in result.stdout.split('\n'):
-                line = ansi_pattern.sub('', line).strip()
-                if line and line.startswith('http') and '[' in line:
+                line = line.strip()
+                # Format now: "url [status_code]" without colors
+                if line and line.startswith('http') and '[' in line and ']' in line:
                     url = line.split('[')[0].strip()
                     live.append(url)
-            if live:
-                live = list(dict.fromkeys(live))
-                with open(output_file, 'w') as f:
-                    for url in live:
-                        f.write(f"{url}\n")
-                self.logger.tool_end('httpx', str(output_file), len(live))
-                return live
+            live = list(dict.fromkeys(live))
+            self.logger.tool_end('httpx', str(output_file), len(live))
+            return live
         
-        # If httpx failed, return empty list
-        self.logger.warning(f"httpx failed: {result.error_message or 'no output'}")
+        # If nothing worked, return empty list
+        self.logger.tool_end('httpx', str(output_file), 0)
         return []
     
     def parse_output(self, raw: str) -> List[Any]:
