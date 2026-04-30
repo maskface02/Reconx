@@ -155,25 +155,43 @@ class Phase2Probing(BasePhase):
             cmd = [
                 self.get_tool_path('masscan'),
                 '-iL', str(ips_file),
-                '-p1-65535',
+                '-p', '22,80,443,445,3389,8080,8443',
                 '--rate', '1000',
                 '-oJ', str(masscan_output)
             ]
             
+            cmd_str = ' '.join(cmd)
+            self.logger.tool_start('masscan', cmd_str)
+            
+            self.logger.debug(f"Running masscan with {len(ips)} IPs")
             result = await self.runner.run('masscan', cmd, masscan_output)
+            
+            self.logger.debug(f"masscan result: success={result.success}, returncode={result.returncode}")
             
             if result.success and masscan_output.exists():
                 try:
                     with open(masscan_output, 'r') as f:
-                        data = json.load(f)
-                        for entry in data:
-                            ip = entry.get('ip')
-                            ports = [p['port'] for p in entry.get('ports', [])]
-                            if ip:
-                                results[ip] = ports
+                        content = f.read().strip()
+                        if content:
+                            # masscan outputs JSONL format (one JSON object per line)
+                            for line in content.split('\n'):
+                                line = line.strip()
+                                if line and line != '[' and line != ']' and line != ',':
+                                    try:
+                                        entry = json.loads(line)
+                                        ip = entry.get('ip')
+                                        ports = [p['port'] for p in entry.get('ports', [])]
+                                        if ip:
+                                            results[ip] = ports
+                                    except json.JSONDecodeError:
+                                        pass
                     self.logger.tool_end('masscan', str(masscan_output), len(results))
-                except json.JSONDecodeError:
-                    pass
+                except Exception as e:
+                    self.logger.warning(f"masscan parse failed: {e}")
+                    self.logger.tool_end('masscan', str(masscan_output), 0)
+            else:
+                self.logger.warning(f"masscan failed: {result.stderr or 'unknown error'}")
+                self.logger.tool_end('masscan', str(masscan_output), 0)
         else:
             self.logger.tool_skipped('masscan', 'not installed')
         
@@ -193,10 +211,17 @@ class Phase2Probing(BasePhase):
                 '-oJ', str(nmap_output)
             ]
             
+            cmd_str = ' '.join(cmd)
+            self.logger.tool_start('nmap', cmd_str)
+            
             result = await self.runner.run('nmap', cmd, nmap_output)
             
             if result.success:
                 self.logger.tool_end('nmap', str(nmap_output), len(results))
+            else:
+                self.logger.tool_end('nmap', str(nmap_output), 0)
+        elif not results:
+            pass  # No ports found from masscan
         else:
             self.logger.tool_skipped('nmap', 'not installed')
         
@@ -258,8 +283,8 @@ class Phase2Probing(BasePhase):
             # Get WAF info
             waf = waf_results.get(url, '')
             
-            # Get ports
-            ip = result.get('host', '')
+            # Get ports - use host_ip (the resolved IP) to match port_results keys
+            ip = result.get('host_ip', '')
             ports = port_results.get(ip, [])
             
             probe = HttpProbe(
