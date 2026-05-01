@@ -154,23 +154,31 @@ def run(
         console=console
     ))
 
+    # Only show Pipeline completed/failed for full pipeline or from-phase to to-phase
+    # For single phase (-p X), the individual phase message is shown in orchestrator
+    is_single_phase = phase is not None
+    
     if success:
-        console.print("")
-        console.print(
-            Panel(
-                "[bold green]Pipeline completed successfully![/bold green]",
-                border_style="green",
+        if not is_single_phase:
+            console.print("")
+            console.print(
+                Panel(
+                    "[bold green]Pipeline completed successfully![/bold green]",
+                    border_style="green",
+                )
             )
-        )
     else:
-        console.print("")
-        console.print(
-            Panel(
-                "[bold red]Pipeline failed![/bold red]",
-                border_style="red",
+        if is_single_phase:
+            sys.exit(1)  # Individual failure message already shown in orchestrator
+        else:
+            console.print("")
+            console.print(
+                Panel(
+                    "[bold red]Pipeline failed![/bold red]",
+                    border_style="red",
+                )
             )
-        )
-        sys.exit(1)
+            sys.exit(1)
 
 
 @cli.command()

@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 from core.workspace import Workspace
 from core.models import Parameter, PhaseOutput
 from core.utils import deduplicate_lines, is_in_scope
-from .base import BasePhase
+from .base import BasePhase, PhaseException
 
 
 class Phase4Enumeration(BasePhase):
@@ -31,6 +31,10 @@ class Phase4Enumeration(BasePhase):
     
     async def run(self) -> PhaseOutput:
         """Execute Phase 4: Enumeration."""
+        # Check Phase 3 output first
+        if not self.check_prev_phase(3):
+            raise PhaseException("No Phase 3 output found. Run 'python3 main.py run --from-phase 1 --to-phase 3 --force' first.")
+        
         self.logger.phase_start(self.name, target=self.target)
         
         # Load URLs from Phase 3

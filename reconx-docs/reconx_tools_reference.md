@@ -179,31 +179,44 @@ results are captured via PIPE to avoid buffering hangs.
 
 ### 5. dnsx
 
-**Purpose:** DNS resolution - verify which subdomains resolve to IPs
+**Purpose:** DNS resolution - verify which subdomains resolve to IPs, with optional ASN lookup
 
 **Command:**
 ```bash
-dnsx -l {input_file} -silent -o {output_file}
+dnsx -l {input_file} -silent -re -asn -cname -a -aaaa -o {output_file}
 ```
 
 **Flags:**
 - `-l {input_file}`: File with subdomains to resolve
 - `-silent`: Show only resolvable subdomains
+- `-re`: Show response (includes IP, CNAME, etc.)
+- `-asn`: Lookup ASN information (requires PDCP_API_KEY)
+- `-cname`: Show CNAME records
+- `-a`: Show A records (IPv4)
+- `-aaaa`: Show AAAA records (IPv6)
 - `-o {output_file}`: Output file
 
 **Example:**
 ```python
-# After merging all discovered subdomains
+# Get PDCP API key for ASN lookups
+pdcp_api_key = self.config.get('PDCP_API_KEY')
+env = {'PDCP_API_KEY': pdcp_api_key} if pdcp_api_key else None
+
 cmd = [
     self.get_tool_path('dnsx'),
     '-l', str(merged_file),      # "workspaces/apple.com/raw/subdomains_merged.txt"
     '-silent',
+    '-re',                       # Show response details
+    '-asn',                      # Include ASN (requires API key)
+    '-cname',                    # Include CNAME
+    '-a',                        # Include A records
+    '-aaaa',                     # Include AAAA records
     '-o', str(output_file)       # "workspaces/apple.com/raw/subdomains_resolved.txt"
 ]
 
 # Actual execution:
 # dnsx -l workspaces/apple.com/raw/subdomains_merged.txt \
-#      -silent \
+#      -silent -re -asn -cname -a -aaaa \
 #      -o workspaces/apple.com/raw/subdomains_resolved.txt
 ```
 
@@ -214,29 +227,37 @@ api.apple.com
 test.apple.com
 ```
 
-**Output Format:** Only resolvable subdomains
+**Output Format:** Resolvable subdomains with IP and optional ASN
 ```
-api.apple.com
-dev.apple.com
+api.apple.com [A] [93.184.216.34] [AS15169, google-01, US]
+api.apple.com [CNAME] [cdn.cloudflare.com] [AS13335, cloudflarenet, US]
 ```
 
 **Fallback:** If dnsx not installed, assumes all subdomains are valid and passes them through.
+
+**Note:** The `-asn` flag requires a PDCP_API_KEY in config. Results include AS number, organization name, and country code when available.
 
 ---
 
 ### 6. httpx (Live Check)
 
-**Purpose:** Verify which subdomains have live HTTP/HTTPS services
+**Purpose:** Verify which subdomains have live HTTP/HTTPS services (2xx/3xx only)
 
 **Command:**
 ```bash
-httpx -l {input_file} -silent -o {output_file}
+httpx -l {input_file} -silent -no-color -sc -cl -ct 5 -o {output_file}
 ```
 
 **Flags:**
 - `-l {input_file}`: File with subdomains/URLs to check
 - `-silent`: Output only live URLs
+- `-no-color`: Disable ANSI colors
+- `-sc`: Show status code
+- `-cl`: Show content length
+- `-ct 5`: Show content type (first 5 chars)
 - `-o {output_file}`: Output file
+
+**Python Filtering:** The output includes status codes in format `url [status_code]`. The code filters out 4xx and 5xx responses, keeping only 2xx (success) and 3xx (redirect) in the final output.
 
 **Example:**
 ```python
@@ -245,13 +266,18 @@ cmd = [
     self.get_tool_path('httpx'),
     '-l', str(input_file),       # "workspaces/apple.com/raw/httpx_input.txt"
     '-silent',
-    '-o', str(output_file)       # "workspaces/apple.com/raw/subdomains_live.txt"
+    '-no-color',
+    '-o', str(output_file),       # "workspaces/apple.com/raw/subdomains_live.txt"
+    '-sc',                        # Status code
+    '-cl',                        # Content length
+    '-ct', '5'                    # Content type (5 chars)
 ]
 
 # Actual execution:
 # httpx -l workspaces/apple.com/raw/httpx_input.txt \
-#       -silent \
-#       -o workspaces/apple.com/raw/subdomains_live.txt
+#       -silent -no-color \
+#       -o workspaces/apple.com/raw/subdomains_live.txt \
+#       -sc -cl -ct 5
 ```
 
 **Input Preparation:**
@@ -264,12 +290,14 @@ for sub in subdomains:
         urls.append(f"http://{sub}")
 ```
 
-**Output Format:** Live URLs only
+**Output Format:** Live URLs with status (raw output for debugging)
 ```
-https://api.apple.com
-https://dev.apple.com
-http://staging.apple.com
+https://api.apple.com [200] [1234] [text/]
+https://dev.apple.com [301] [0] []
+https://staging.apple.com [404] [19] [text/]
 ```
+
+**Final Filtering:** Python code filters this output, keeping only 2xx/3xx responses. The debug file keeps all responses, but `phase1_output.json` contains only live (2xx/3xx) hosts.
 
 ---
 
@@ -323,7 +351,7 @@ for entry in data:
 
 ---
 
-### 8. Chaos API
+### 8. PDCP API (Chaos Dataset)
 
 **Purpose:** Query ProjectDiscovery Chaos dataset (requires API key)
 
@@ -334,7 +362,7 @@ https://dns.projectdiscovery.io/dns/{target}/subdomains
 
 **Example:**
 ```python
-api_key = self.config.get('chaos_api_key')
+api_key = self.config.get('PDCP_API_KEY')
 url = f"https://dns.projectdiscovery.io/dns/{self.target}/subdomains"
 
 result = await self.runner.fetch_url(
@@ -472,13 +500,13 @@ with open(output_file, 'r') as f:
 
 **Command:**
 ```bash
-masscan -iL {ips_file} -p1-65535 --rate 1000 -oJ {output_file}
+masscan -iL {ips_file} -p T:1-1000,U:1-1000 --rate 5000 -oJ {output_file}
 ```
 
 **Flags:**
 - `-iL {ips_file}`: Input file with IP addresses
-- `-p1-65535`: Scan all ports (1-65535)
-- `--rate 1000`: Packets per second (adjust for network)
+- `-p T:1-1000,U:1-1000`: Scan top 1000 TCP and UDP ports
+- `--rate 5000`: Packets per second (aggressive for faster scanning)
 - `-oJ {output_file}`: Output in JSON format
 
 **Example:**
@@ -486,18 +514,18 @@ masscan -iL {ips_file} -p1-65535 --rate 1000 -oJ {output_file}
 cmd = [
     self.get_tool_path('masscan'),
     '-iL', str(ips_file),            # "workspaces/apple.com/raw/ips.txt"
-    '-p1-65535',
-    '--rate', '1000',
-    '-oJ', str(output_file)          # "workspaces/apple.com/raw/masscan_out.json"
+    '-p', 'T:1-1000,U:1-1000',       # TCP + UDP ports 1-1000
+    '--rate', '5000',                 # Aggressive rate
+    '-oJ', str(output_file)           # "workspaces/apple.com/raw/masscan_out.json"
 ]
 
 # Actual execution:
 # masscan -iL workspaces/apple.com/raw/ips.txt \
-#         -p1-65535 --rate 1000 \
+#         -p T:1-1000,U:1-1000 --rate 5000 \
 #         -oJ workspaces/apple.com/raw/masscan_out.json
 ```
 
-**Input Format:** Plain text IPs (extracted from Phase 1 results)
+**Input Format:** Plain text IPs (from httpx `host_ip` in Phase 2)
 ```
 17.253.144.10
 17.253.144.11
@@ -512,7 +540,7 @@ cmd = [
     "ports": [
       {"port": 80, "proto": "tcp", "status": "open", "reason": "syn-ack"},
       {"port": 443, "proto": "tcp", "status": "open", "reason": "syn-ack"},
-      {"port": 8080, "proto": "tcp", "status": "open", "reason": "syn-ack"}
+      {"port": 53, "proto": "udp", "status": "open", "reason": "udp-ack"}
     ]
   }
 ]
@@ -525,10 +553,14 @@ for entry in data:
     ip = entry.get('ip')
     ports = [p['port'] for p in entry.get('ports', [])]
     port_results[ip] = ports
-# {"17.253.144.10": [80, 443, 8080]}
+# {"17.253.144.10": [80, 443, 53]}
 ```
 
-**Note:** Requires root/sudo privileges. Skipped if not available.
+**Note:** 
+- Uses `T:port` for TCP and `U:port` for UDP
+- Rate increased to 5000 for faster scanning
+- IP source is `host_ip` from httpx results (actual connected IP)
+- Requires root/sudo privileges. Skipped if not available.
 
 ---
 
@@ -538,44 +570,55 @@ for entry in data:
 
 **Command:**
 ```bash
-nmap -sV -iL {open_ports_file} -oJ {output_file}
+nmap -sV -T4 -iL {open_ports_file} -p {ports} -oJ {output_file}
 ```
 
 **Flags:**
 - `-sV`: Probe open ports to determine service/version info
-- `-iL {open_ports_file}`: Input file with `IP:port` format
+- `-T4`: Aggressive timing (faster scan)
+- `-iL {open_ports_file}`: Input file with IP addresses (one per line)
+- `-p {ports}`: Comma-separated list of ports found by masscan
 - `-oJ {output_file}`: Output in JSON format
 
 **Example:**
 ```python
-# First, create open_ports.txt from masscan results
-with open(open_ports_file, 'w') as f:
-    for ip, ports in masscan_results.items():
-        for port in ports:
-            f.write(f"{ip}:{port}\n")
+# First, get unique IPs from masscan results
+unique_ips = list(masscan_results.keys())  # IPs with open ports
+
+# Get all unique ports found by masscan
+all_ports = set()
+for ports in masscan_results.values():
+    all_ports.update(ports)
+ports_str = ','.join(map(str, sorted(all_ports)))  # e.g., "80,443,8080"
 
 cmd = [
     self.get_tool_path('nmap'),
-    '-sV',
+    '-sV',                           # Service version detection
+    '-T4',                           # Aggressive timing
     '-iL', str(open_ports_file),     # "workspaces/apple.com/raw/open_ports.txt"
-    '-oJ', str(output_file)           # "workspaces/apple.com/raw/nmap_out.json"
+    '-p', ports_str,                 # e.g., "80,443,8080"
+    '-oJ', str(output_file)          # "workspaces/apple.com/raw/nmap_out.json"
 ]
 
 # Actual execution:
-# nmap -sV -iL workspaces/apple.com/raw/open_ports.txt \
-#      -oJ workspaces/apple.com/raw/nmap_out.json
+# nmap -sV -T4 -iL workspaces/apple.com/raw/open_ports.txt \
+#       -p 80,443,8080 \
+#       -oJ workspaces/apple.com/raw/nmap_out.json
 ```
 
-**Input Format:** `IP:port` pairs
+**Input Format:** IPs only (one per line) - ports are passed via `-p` flag
 ```
-17.253.144.10:80
-17.253.144.10:443
-17.253.144.10:8080
+17.253.144.10
+17.253.144.11
+17.142.160.59
 ```
 
 **Output Format:** JSON (nmap's JSON output)
 
-**Note:** Slow on many ports. Only runs if masscan found open ports.
+**Note:** 
+- Only scans the ports that masscan found open (dynamic, not fixed list)
+- Only runs if masscan found open ports
+- Uses aggressive timing (`-T4`) for faster execution
 
 ---
 
@@ -585,12 +628,13 @@ cmd = [
 
 **Command:**
 ```bash
-wafw00f {url} -o {output_file}
+wafw00f {url} -f json -o -
 ```
 
 **Flags:**
 - `{url}`: Target URL (positional)
-- `-o {output_file}`: JSON output file
+- `-f json`: Force JSON output format
+- `-o -`: Output to stdout (JSON format)
 
 **Example:**
 ```python
@@ -603,14 +647,25 @@ for url in sample_urls:
     cmd = [
         self.get_tool_path('wafw00f'),
         url,                             # e.g., "https://api.apple.com"
-        '-o', str(output_file)
+        '-f', 'json',                    # JSON output format
+        '-o', '-'                        # Output to stdout
     ]
 
     # Actual execution:
-    # wafw00f https://api.apple.com -o workspaces/apple.com/raw/wafw00f_https___api.apple.com.json
+    # wafw00f https://api.apple.com -f json -o -
+    #
+    # JSON output captured from stdout:
+    # [
+    #   {
+    #     "url": "https://api.apple.com",
+    #     "detected": true,
+    #     "firewall": "Cloudflare",
+    #     "manufacturer": "Cloudflare, Inc."
+    #   }
+    # ]
 ```
 
-**Output Format:** JSON array
+**Output Format:** JSON array (captured from stdout)
 ```json
 [
   {
@@ -633,6 +688,11 @@ if data and len(data) > 0:
 ```
 
 **Integration:** WAF detection triggers -15 penalty in FP Filter (responses may be altered).
+
+**Note:** 
+- Uses `-f json` to get machine-readable output
+- Uses `-o -` to output JSON to stdout (not to file)
+- JSON parsing happens in Python after capturing stdout
 
 ---
 
@@ -1811,45 +1871,58 @@ Phase Input → Tool Command → Raw Output → Parsing → Structured Data → 
 
 ### Tool Path Configuration
 
+All tools are installed in `~/.local/bin/` (or `$HOME/.local/bin/`).
+
 ```yaml
 tools:
-  # Go tools (usually in ~/go/bin/ or /usr/local/bin/)
-  subfinder: /usr/local/bin/subfinder
-  amass: /usr/local/bin/amass
-  assetfinder: /usr/local/bin/assetfinder
-  dnsx: /usr/local/bin/dnsx
-  httpx: /usr/local/bin/httpx
-  katana: /usr/local/bin/katana
-  ffuf: /usr/local/bin/ffuf
-  dalfox: /usr/local/bin/dalfox
-  gf: /usr/local/bin/gf
-  waybackurls: /usr/local/bin/waybackurls
-  gau: /usr/local/bin/gau
-  gospider: /usr/local/bin/gospider
-  hakrawler: /usr/local/bin/hakrawler
-  nuclei: /usr/local/bin/nuclei
+  # Go tools (~/.local/bin/)
+  subfinder: ~/.local/bin/subfinder
+  amass: ~/.local/bin/amass
+  assetfinder: ~/.local/bin/assetfinder
+  dnsx: ~/.local/bin/dnsx
+  httpx: ~/.local/bin/httpx
+  katana: ~/.local/bin/katana
+  ffuf: ~/.local/bin/ffuf
+  dalfox: ~/.local/bin/dalfox
+  gf: ~/.local/bin/gf
+  waybackurls: ~/.local/bin/waybackurls
+  gau: ~/.local/bin/gau
+  gospider: ~/.local/bin/gospider
+  hakrawler: ~/.local/bin/hakrawler
+  nuclei: ~/.local/bin/nuclei
+  trufflehog: ~/.local/bin/trufflehog
 
-  # Python tools (pip installed)
-  arjun: arjun
-  ghauri: ghauri
-  trufflehog: trufflehog
+  # Python tools (pip installed via pipx) (~/.local/bin/)
+  arjun: ~/.local/bin/arjun
+  ghauri: ~/.local/bin/ghauri
 
-  # Git tools (in /opt/)
-  sqlmap: /usr/local/bin/sqlmap        # Wrapper script
-  paramspider: /usr/local/bin/paramspider
-  secretfinder: /usr/local/bin/secretfinder
-  wafw00f: /usr/local/bin/wafw00f
-  nikto: /usr/local/bin/nikto
-  linkfinder: /usr/local/bin/linkfinder
-  xsstrike: /usr/local/bin/xsstrike
-  jwt_tool: /usr/local/bin/jwt-tool
-  gitdorker: /usr/local/bin/gitdorker
+  # Git-based tools with venv wrappers (~/.local/bin/)
+  sqlmap: ~/.local/bin/sqlmap
+  paramspider: ~/.local/bin/paramspider
+  secretfinder: ~/.local/bin/secretfinder
+  wafw00f: ~/.local/bin/wafw00f
+  nikto: ~/.local/bin/nikto
+  linkfinder: ~/.local/bin/linkfinder
+  xsstrike: ~/.local/bin/xsstrike
+  jwt_tool: ~/.local/bin/jwt-tool
+  gitdorker: ~/.local/bin/gitdorker
 
-  # Compiled tools
-  masscan: /usr/local/bin/masscan
-  nmap: /usr/bin/nmap
-  feroxbuster: /usr/local/bin/feroxbuster
-  x8: /usr/local/bin/x8
+  # Compiled tools (~/.local/bin/)
+  masscan: ~/.local/bin/masscan
+  nmap: ~/.local/bin/nmap
+  feroxbuster: ~/.local/bin/feroxbuster
+  x8: ~/.local/bin/x8
+  crt.sh: ~/.local/bin/crt.sh
+
+# Full Tool Path Reference (from setup_tools.sh)
+# Install dir: ~/.local/bin
+# All tools installed via setup_tools.sh go to: ~/.local/bin/
+#
+# Go tools:          ~/.local/bin/{subfinder,amass,assetfinder,dnsx,httpx,katana,ffuf,dalfox,gf,waybackurls,gau,gospider,hakrawler,nuclei}
+# Python (pipx):     ~/.local/bin/{arjun}
+# Git clone + venv:  ~/.local/bin/{sqlmap,paramspider,secretfinder,wafw00f,nikto,linkfinder,xsstrike,jwt-tool,gitdorker}
+# Compiled:          ~/.local/bin/{masscan,nmap,feroxbuster,x8}
+# Scripts:           ~/.local/bin/{crt.sh}
 ```
 
 ### Rate Limiting
@@ -1871,32 +1944,32 @@ threads: 20       # Parallel operations
 
 | Phase | Tool | Key Flags | Output |
 |-------|------|-----------|--------|
-| 1 | subfinder | `-d -silent -o` | Plain text |
-| 1 | amass | `enum -passive/active -d -o` | Plain text |
+| 1 | subfinder | `-d {domain} -silent -o {file}` | Plain text |
+| 1 | amass | `enum -passive/active -d {domain} -o {file}` | Plain text |
 | 1 | assetfinder | `--subs-only` | stdout |
-| 1 | dnsx | `-l -silent -o` | Plain text |
-| 1 | httpx | `-l -silent -o` | Plain text |
-| 2 | httpx | `-l -tech-detect -status-code -title -json` | JSONL |
-| 2 | masscan | `-iL -p1-65535 --rate -oJ` | JSON |
-| 2 | nmap | `-sV -iL -oJ` | JSON |
-| 2 | wafw00f | `-o` | JSON |
-| 3 | katana | `-u -headless -js-crawl -depth -o` | Plain text |
-| 3 | gospider | `-s -o -t --depth` | Directory |
-| 3 | waybackurls | (domain) | stdout |
-| 3 | gau | (domain) | stdout |
-| 3 | linkfinder | `-i -o cli` | stdout |
-| 4 | ffuf | `-u -w -t -mc -o -of json` | JSON |
-| 4 | feroxbuster | `-u -w -t --json -o` | JSONL |
-| 4 | paramspider | `-d -o` | Directory |
-| 4 | arjun | `-u -oJ` | JSON |
-| 4 | x8 | `-u -w -o` | JSON |
-| 4 | gf | (pattern) (file) | stdout |
-| 5 | secretfinder | `-i -o cli` | stdout |
-| 5 | trufflehog | `filesystem --json -o` | JSONL |
-| 5 | nuclei | `-l -t -severity -json -o` | JSONL |
-| 5 | nikto | `-h -Format json -o` | JSON |
-| 6 | sqlmap | `-u -p --dbs --batch --output-dir` | JSON/Dir |
-| 6 | dalfox | `url --param --waf-evasion --output` | File |
-| 6 | jwt_tool | `-t -rh -M` | stdout |
-| 6 | ffuf | `-u -w -mc -o` | JSON |
-| 6 | nuclei | `-u -t -json -o` | JSON |
+| 1 | dnsx | `-l {file} -silent -re -asn -cname -a -aaaa -o {file}` | Plain text |
+| 1 | httpx | `-l {file} -silent -no-color -sc -cl -ct 5 -o {file}` (Python filters 4xx/5xx) | Plain text |
+| 2 | httpx | `-l {file} -tech-detect -status-code -title -json -o {file}` | JSONL |
+| 2 | masscan | `-iL {file} -p T:1-1000,U:1-1000 --rate 5000 -oJ {file}` | JSON |
+| 2 | nmap | `-sV -T4 -iL {file} -p {ports} -oJ {file}` | JSON |
+| 2 | wafw00f | `{url} -f json -o -` | JSON (stdout) |
+| 3 | katana | `-u {url} -headless -js-crawl -depth 5 -o {file}` | Plain text |
+| 3 | gospider | `-s {url} -o {dir} -t 20 --depth 5` | Directory |
+| 3 | waybackurls | `{domain}` | stdout |
+| 3 | gau | `{domain}` | stdout |
+| 3 | linkfinder | `-i {js_url} -o cli` | stdout |
+| 4 | ffuf | `-u {url}/FUZZ -w {wordlist} -t 40 -mc 200,301,302,403,405 -o {file} -of json` | JSON |
+| 4 | feroxbuster | `-u {url} -w {wordlist} -t 20 --json -o {file}` | JSONL |
+| 4 | paramspider | `-d {domain} -o {dir}` | Directory |
+| 4 | arjun | `-u {url} -oJ {file}` | JSON |
+| 4 | x8 | `-u {url} -w {wordlist} -o {file}` | JSON |
+| 4 | gf | `{pattern} {file}` | stdout |
+| 5 | secretfinder | `-i {js_url} -o cli` | stdout |
+| 5 | trufflehog | `filesystem {path} --json -o {file}` | JSONL |
+| 5 | nuclei | `-l {file} -t {templates} -severity critical,high,medium -json -o {file}` | JSONL |
+| 5 | nikto | `-h {url} -Format json -o {file}` | JSON |
+| 6 | sqlmap | `-u {url} -p {param} --dbs --batch --output-dir {dir}` | JSON/Dir |
+| 6 | dalfox | `url {url} --param {param} --waf-evasion --output {file}` | File |
+| 6 | jwt_tool | `{token} -t {url} -rh "Authorization: Bearer JWTTOOL_TOKEN" -M pb` | stdout |
+| 6 | ffuf | `-u {url}?{param}=FUZZ -w {wordlist} -mc 200 -o {file} -of json` | JSON |
+| 6 | nuclei | `-u {url} -t {template} -json -o {file}` | JSON |

@@ -122,24 +122,28 @@ class ToolStatusTracker:
     def __init__(self):
         self._tools: Dict[str, str] = {}  # tool -> "running" or detail
         self._spinner_idx = 0
-
+        self._phase_name: str = ""
+    
     def start(self, tool: str):
         self._tools[tool] = "running"
-
+    
     def complete(self, tool: str, detail: str):
         self._tools[tool] = detail
-
+    
     def reset(self):
         self._tools.clear()
         self._spinner_idx = 0
-
+    
+    def set_phase(self, name: str):
+        self._phase_name = name
+    
     def _next_spinner(self) -> str:
         """Cycle through spinner characters."""
         spinners = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         char = spinners[self._spinner_idx % len(spinners)]
         self._spinner_idx += 1
         return char
-
+    
     def render(self) -> str:
         running = [t for t, s in self._tools.items() if s == "running"]
         completed = [(t, s) for t, s in self._tools.items() if s != "running"]
@@ -151,7 +155,9 @@ class ToolStatusTracker:
         for tool, status in completed[-10:]:
             lines.append(f"  [dim]{tool}[/dim] — {status}")
 
-        return "\n".join(lines) if lines else "[dim]Initializing...[/dim]"
+        if not lines:
+            return f"[dim]Waiting for {self._phase_name}...[/dim]" if self._phase_name else ""
+        return "\n".join(lines)
 
 tool_tracker = ToolStatusTracker()
 

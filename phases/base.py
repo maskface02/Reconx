@@ -71,3 +71,7 @@ class BasePhase(ABC):
             return False
         output_path = self.workspace.get_phase_output(self.phase_number)
         return output_path.exists()
+    
+    def check_prev_phase(self, phase_num: int) -> bool:
+        """Check if previous phase output exists."""
+        return self.workspace.load_phase_output(phase_num) is not None

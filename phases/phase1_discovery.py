@@ -463,25 +463,40 @@ class Phase1Discovery(BasePhase):
                     
                     # Extract subdomain (first token before any bracket)
                     subdomain = line.split()[0] if line.split() else ''
-                    if not subdomain or subdomain in seen:
+                    if not subdomain:
                         continue
-                    seen.add(subdomain)
                     
                     # Extract IP - find first IP pattern
                     ip_match = re.search(r'(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})', line)
                     ip_value = ip_match.group(1) if ip_match else None
                     
+                    # Extract CNAME - only when line contains CNAME tag (has escape chars)
+                    cname_value = None
+                    if '\x1b[35mCNAME' in line:
+                        cname_match = re.search(r'32m([^\x1b]+)\x1b', line)
+                        if cname_match:
+                            cname_value = cname_match.group(1)
+                    
                     # Extract ASN
                     asn_match = re.search(r'(AS\d+)', line)
                     asn_value = asn_match.group(1) if asn_match else None
                     
-                    resolved.append(subdomain)
-                    self.dns_data[subdomain] = {
-                        'ip': ip_value,
-                        'aaaa': None,
-                        'cname': None,
-                        'asn': asn_value,
-                    }
+                    # Merge with existing data - preserve first value for each field
+                    if subdomain not in self.dns_data:
+                        self.dns_data[subdomain] = {
+                            'ip': None,
+                            'aaaa': None,
+                            'cname': None,
+                            'asn': None,
+                        }
+                        resolved.append(subdomain)
+                    
+                    if self.dns_data[subdomain]['ip'] is None and ip_value:
+                        self.dns_data[subdomain]['ip'] = ip_value
+                    if self.dns_data[subdomain]['cname'] is None and cname_value:
+                        self.dns_data[subdomain]['cname'] = cname_value
+                    if self.dns_data[subdomain]['asn'] is None and asn_value:
+                        self.dns_data[subdomain]['asn'] = asn_value
             
             self.logger.tool_end('dnsx', str(output_file), len(resolved))
             return resolved
@@ -528,12 +543,16 @@ class Phase1Discovery(BasePhase):
                 live = []
                 for line in f:
                     line = line.strip()
-                    # Format now: "url [status_code]" without colors
-                    # Check if line looks valid: starts with http and contains status code in brackets
                     if line and line.startswith('http') and '[' in line and ']' in line:
                         url = line.split('[')[0].strip()
-                        live.append(url)
-            # Deduplicate live URLs before returning
+                        # Extract status code and filter out 4XX and 5XX
+                        status_part = line.split('[')[1].split(']')[0].strip()
+                        try:
+                            status_code = int(status_part)
+                            if 200 <= status_code < 400:
+                                live.append(url)
+                        except ValueError:
+                            pass
             live = list(dict.fromkeys(live))
             self.logger.tool_end('httpx', str(output_file), len(live))
             return live
@@ -543,15 +562,20 @@ class Phase1Discovery(BasePhase):
             live = []
             for line in result.stdout.split('\n'):
                 line = line.strip()
-                # Format now: "url [status_code]" without colors
                 if line and line.startswith('http') and '[' in line and ']' in line:
                     url = line.split('[')[0].strip()
-                    live.append(url)
+                    status_part = line.split('[')[1].split(']')[0].strip()
+                    try:
+                        status_code = int(status_part)
+                        if 200 <= status_code < 400:
+                            live.append(url)
+                    except ValueError:
+                        pass
             live = list(dict.fromkeys(live))
             self.logger.tool_end('httpx', str(output_file), len(live))
             return live
         
-        # If nothing worked, return empty list
+        # If httpx failed, return empty list
         self.logger.tool_end('httpx', str(output_file), 0)
         return []
     

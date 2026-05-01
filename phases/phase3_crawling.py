@@ -11,7 +11,7 @@ from urllib.parse import urlparse, urljoin
 from core.workspace import Workspace
 from core.models import CrawledUrl, PhaseOutput
 from core.utils import deduplicate_lines, is_in_scope
-from .base import BasePhase
+from .base import BasePhase, PhaseException
 
 
 class Phase3Crawling(BasePhase):
@@ -30,6 +30,10 @@ class Phase3Crawling(BasePhase):
 
     async def run(self) -> PhaseOutput:
         """Execute Phase 3: URL crawling."""
+        # Check Phase 2 output first
+        if not self.check_prev_phase(2):
+            raise PhaseException("No Phase 2 output found. Run 'python3 main.py run --from-phase 1 --to-phase 2 --force' first.")
+        
         self.logger.phase_start(self.name, target=self.target)
 
         # Load URLs from Phase 2

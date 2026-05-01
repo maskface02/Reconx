@@ -7,10 +7,12 @@ from typing import Optional, Dict, Any
 from pathlib import Path
 from rich.live import Live
 from rich.text import Text
+from rich.console import Console
 
 from core.workspace import Workspace
 from core.logger import get_logger, reset_logger, tool_tracker
 from core.models import PhaseOutput
+from phases.base import PhaseException
 from phases import (
     Phase1Discovery,
     Phase2Probing,
@@ -18,12 +20,11 @@ from phases import (
     Phase4Enumeration,
     Phase5Scanning,
     Phase6Exploitation,
-    FPFilter
+    FPFilter,
 )
-from phases.base import PhaseException
 
+console = Console()
 
-# Phase display names
 PHASE_NAMES = {
     1: "Subdomain & Asset Discovery",
     2: "HTTP Probing & Tech Fingerprinting",
@@ -68,6 +69,28 @@ class PipelineOrchestrator:
             6: Phase6Exploitation,
         }
     
+    def _print_phase_footer(self, phase_key, phase_name, success: bool = True):
+        """Print a footer banner for phase completion/failure."""
+        from rich.panel import Panel
+        from rich.text import Text
+        
+        if success:
+            console.print(
+                Panel(
+                    Text(f"✓ Phase {phase_key} completed successfully!", justify="center", style="bold green"),
+                    border_style="green",
+                    padding=(0, 2)
+                )
+            )
+        else:
+            console.print(
+                Panel(
+                    Text(f"✗ Phase {phase_key} failed!", justify="center", style="bold red"),
+                    border_style="red",
+                    padding=(0, 2)
+                )
+            )
+    
     async def run_pipeline(self, from_phase: int = 1, 
                           to_phase: Optional[int] = None,
                           single_phase: Optional[int] = None) -> bool:
@@ -85,10 +108,13 @@ class PipelineOrchestrator:
         # Determine phases to run
         if single_phase is not None:
             phases = [single_phase]
+            is_full_pipeline = False
         else:
             phases = [1, 2, 3, 4, 5, "fp", 6]
             if to_phase:
-                phases = [p for p in phases if (isinstance(p, int) and p <= to_phase) or p == "fp"]
+                phases = [p for p in phases if (isinstance(p, int) and p <= to_phase) or (p == "fp" and to_phase >= 5)]
+            # Full pipeline means running from phase 1 to at least phase 6
+            is_full_pipeline = (from_phase == 1 and to_phase is None) or (from_phase == 1 and to_phase == 6)
         
         self.logger.info(
             f"Starting pipeline for {self.target}", silent=True,
@@ -131,6 +157,7 @@ class PipelineOrchestrator:
 
             # Reset tool tracker for this phase
             tool_tracker.reset()
+            tool_tracker.set_phase(phase_name)
 
             # Run phase with live tool status
             self.logger.set_phase_context(
@@ -168,16 +195,26 @@ class PipelineOrchestrator:
                     count=output.count
                 )
 
-                # Show phase completion
-                if self.console:
+                # Show phase completion (only if there are items)
+                if self.console and output.count > 0:
                     self.console.print(f"\n[bold]Phase {phase_name}:[/bold] [bold cyan]{output.count} items[/bold cyan]")
+                
+                # Show footer banner for success
+                if self.console:
+                    self._print_phase_footer(phase_key, phase_name, success=True)
 
 
             except PhaseException as e:
                 self.logger.error(f"Phase {phase_key} failed: {e}", silent=True)
+                if self.console:
+                    console.print(f"\n[yellow]{e}[/yellow]\n")
+                    self._print_phase_footer(phase_key, phase_name, success=False)
                 return False
             except Exception as e:
                 self.logger.error(f"Unexpected error in Phase {phase_key}: {e}", silent=True)
+                if self.console:
+                    console.print(f"\n[yellow]{e}[/yellow]\n")
+                    self._print_phase_footer(phase_key, phase_name, success=False)
                 import traceback
                 self.logger.debug(traceback.format_exc(), silent=True)
                 return False
@@ -194,7 +231,10 @@ class PipelineOrchestrator:
                     )
                     return True  # Not a failure, just needs review
 
-        self.logger.info("Pipeline completed successfully", silent=True)
+        # Show appropriate completion message
+        if is_full_pipeline:
+            self.logger.info("Pipeline completed successfully", silent=True)
+        
         return True
     
     async def run_phase(self, phase_number: int) -> bool:

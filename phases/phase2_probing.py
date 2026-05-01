@@ -4,13 +4,18 @@ For every live subdomain, fingerprint the HTTP surface.
 """
 import json
 import asyncio
+import xml.etree.ElementTree as ET
 from typing import List, Any, Dict
 from pathlib import Path
+
+from rich.console import Console
 
 from core.workspace import Workspace
 from core.models import HttpProbe, PhaseOutput
 from core.utils import deduplicate_lines
-from .base import BasePhase
+from .base import BasePhase, PhaseException
+
+console = Console()
 
 
 class Phase2Probing(BasePhase):
@@ -27,17 +32,13 @@ class Phase2Probing(BasePhase):
     
     async def run(self) -> PhaseOutput:
         """Execute Phase 2: HTTP probing."""
-        self.logger.phase_start(self.name, target=self.target)
-        
-        # Load Phase 1 output
+        # Check Phase 1 output FIRST before printing any banners
         phase1_data = self.workspace.load_phase_output(1)
         if not phase1_data:
-            self.logger.warning("No Phase 1 output found, cannot proceed")
-            return PhaseOutput(
-                phase=self.name,
-                count=0,
-                output_file=str(self.workspace.get_phase_output(2))
-            )
+            raise PhaseException("No Phase 1 output found. Run 'python3 main.py run -p 1 --force' first.")
+        
+        # Now safe to start phase
+        self.logger.phase_start(self.name, target=self.target)
         
         # Extract subdomains
         subdomains = [item['subdomain'] for item in phase1_data if item.get('alive', False)]
@@ -69,8 +70,9 @@ class Phase2Probing(BasePhase):
         # Run httpx for detailed probing
         httpx_results = await self._run_httpx(urls_file)
         
-        # Extract IPs for port scanning
-        ips = list(set([item.get('ip') for item in phase1_data if item.get('ip')]))
+        # Extract IPs for port scanning from httpx results (host_ip = actual IP httpx connected to)
+        # This ensures masscan scans the same IP that responded to httpx
+        ips = list(set([r.get('host_ip') for r in httpx_results if r.get('host_ip')]))
         
         # Run port scanning (optional, don't block if tools missing)
         port_results = {}
@@ -139,8 +141,8 @@ class Phase2Probing(BasePhase):
         self.logger.tool_end('httpx', str(output_file), len(results))
         return results
     
-    async def _scan_ports(self, ips: List[str]) -> Dict[str, List[int]]:
-        """Scan ports using masscan and nmap."""
+    async def _scan_ports(self, ips: List[str]) -> Dict[str, Dict]:
+        """Scan ports using masscan and nmap. Returns {ip: {"ports": [], "services": []}}"""
         results = {}
         
         # Save IPs for scanning
@@ -155,8 +157,8 @@ class Phase2Probing(BasePhase):
             cmd = [
                 self.get_tool_path('masscan'),
                 '-iL', str(ips_file),
-                '-p', '22,80,443,445,3389,8080,8443',
-                '--rate', '1000',
+                '-p', 'T:1-1000,U:1-1000',
+                '--rate', '5000',
                 '-oJ', str(masscan_output)
             ]
             
@@ -182,7 +184,7 @@ class Phase2Probing(BasePhase):
                                         ip = entry.get('ip')
                                         ports = [p['port'] for p in entry.get('ports', [])]
                                         if ip:
-                                            results[ip] = ports
+                                            results[ip] = {'ports': ports, 'services': []}
                                     except json.JSONDecodeError:
                                         pass
                     self.logger.tool_end('masscan', str(masscan_output), len(results))
@@ -197,18 +199,30 @@ class Phase2Probing(BasePhase):
         
         # Run nmap on discovered open ports
         if results and self.tool_available('nmap'):
+            # Get unique IPs with open ports
+            unique_ips = list(results.keys())
+            
             open_ports_file = self.workspace.get_raw_file("open_ports.txt")
             with open(open_ports_file, 'w') as f:
-                for ip, ports in results.items():
-                    for port in ports:
-                        f.write(f"{ip}:{port}\n")
+                f.write('\n'.join(unique_ips))
             
-            nmap_output = self.workspace.get_raw_file("nmap_out.json")
+            # Get all ports that need scanning
+            all_ports = set()
+            for data in results.values():
+                if isinstance(data, dict):
+                    all_ports.update(data.get('ports', []))
+                else:
+                    all_ports.update(data)
+            ports_str = ','.join(map(str, sorted(all_ports)))
+            
+            nmap_output = self.workspace.get_raw_file("nmap_out.xml")
             cmd = [
                 self.get_tool_path('nmap'),
-                '-sV',
+                '-sV',           # Service version detection
+                '-T4',           # Aggressive timing
                 '-iL', str(open_ports_file),
-                '-oJ', str(nmap_output)
+                '-p', ports_str,  # Scan only the ports found by masscan
+                '-oX', '-'       # Output to stdout (captured by runner)
             ]
             
             cmd_str = ' '.join(cmd)
@@ -216,8 +230,35 @@ class Phase2Probing(BasePhase):
             
             result = await self.runner.run('nmap', cmd, nmap_output)
             
-            if result.success:
-                self.logger.tool_end('nmap', str(nmap_output), len(results))
+            # Parse nmap XML output to extract service info
+            if result.success and nmap_output.exists():
+                try:
+                    tree = ET.parse(nmap_output)
+                    root = tree.getroot()
+                    for host in root.findall('.//host'):
+                        ip_elem = host.find('address')
+                        if ip_elem is not None:
+                            ip = ip_elem.get('addr')
+                            services = []
+                            for port in host.findall('.//port'):
+                                svc_elem = port.find('service')
+                                if svc_elem is not None:
+                                    name = svc_elem.get('name', '')
+                                    product = svc_elem.get('product', '')
+                                    version = svc_elem.get('version', '')
+                                    service = f"{name}"
+                                    if product:
+                                        service = f"{product}"
+                                    if version:
+                                        service += f" {version}"
+                                    if service:
+                                        services.append(service)
+                            if ip in results and services:
+                                results[ip]['services'] = services
+                    self.logger.tool_end('nmap', str(nmap_output), len(results))
+                except Exception as e:
+                    self.logger.debug(f"nmap XML parse error: {e}")
+                    self.logger.tool_end('nmap', str(nmap_output), 0)
             else:
                 self.logger.tool_end('nmap', str(nmap_output), 0)
         elif not results:
@@ -238,27 +279,32 @@ class Phase2Probing(BasePhase):
         # Sample URLs to avoid too many requests
         sample_urls = urls[:20] if len(urls) > 20 else urls
         
+        self.logger.tool_start('wafw00f', f"Scanning {len(sample_urls)} URLs")
+        
         for url in sample_urls:
             output_file = self.workspace.get_raw_file(f"wafw00f_{url.replace('://', '_').replace('/', '_')}.json")
             
             cmd = [
                 self.get_tool_path('wafw00f'),
                 url,
-                '-o', str(output_file)
+                '-f', 'json',
+                '-o', '-'  # Output JSON to stdout
             ]
             
-            result = await self.runner.run(f'wafw00f_{url}', cmd, output_file)
+            result = await self.runner.run('wafw00f', cmd, output_file)
             
-            if result.success and output_file.exists():
+            # JSON output is in stdout, not in file
+            if result.success and result.stdout:
+                self.logger.debug(f"wafw00f stdout for {url}: {result.stdout[:200]}")
                 try:
-                    with open(output_file, 'r') as f:
-                        data = json.load(f)
-                        if data and len(data) > 0:
-                            waf = data[0].get('firewall', '')
-                            if waf:
-                                results[url] = waf
-                except (json.JSONDecodeError, IndexError):
-                    continue
+                    data = json.loads(result.stdout)
+                    if data and len(data) > 0:
+                        waf = data[0].get('firewall', '')
+                        if waf:
+                            results[url] = waf
+                            self.logger.debug(f"Detected WAF for {url}: {waf}")
+                except (json.JSONDecodeError, IndexError) as e:
+                    self.logger.debug(f"wafw00f parse error for {url}: {e}")
         
         self.logger.tool_end('wafw00f', None, len(results))
         return results
@@ -285,7 +331,8 @@ class Phase2Probing(BasePhase):
             
             # Get ports - use host_ip (the resolved IP) to match port_results keys
             ip = result.get('host_ip', '')
-            ports = port_results.get(ip, [])
+            port_data = port_results.get(ip, {})
+            ports = port_data.get('ports', []) if isinstance(port_data, dict) else []
             
             probe = HttpProbe(
                 url=url,
