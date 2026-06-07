@@ -199,8 +199,8 @@ class PipelineOrchestrator:
                 if self.console and output.count > 0:
                     self.console.print(f"\n[bold]Phase {phase_name}:[/bold] [bold cyan]{output.count} items[/bold cyan]")
                 
-                # Show footer banner for success
-                if self.console:
+                # Show footer banner for success only for single phase runs
+                if self.console and single_phase is not None:
                     self._print_phase_footer(phase_key, phase_name, success=True)
 
 
@@ -208,13 +208,15 @@ class PipelineOrchestrator:
                 self.logger.error(f"Phase {phase_key} failed: {e}", silent=True)
                 if self.console:
                     console.print(f"\n[yellow]{e}[/yellow]\n")
-                    self._print_phase_footer(phase_key, phase_name, success=False)
+                    if single_phase is not None:
+                        self._print_phase_footer(phase_key, phase_name, success=False)
                 return False
             except Exception as e:
                 self.logger.error(f"Unexpected error in Phase {phase_key}: {e}", silent=True)
                 if self.console:
                     console.print(f"\n[yellow]{e}[/yellow]\n")
-                    self._print_phase_footer(phase_key, phase_name, success=False)
+                    if single_phase is not None:
+                        self._print_phase_footer(phase_key, phase_name, success=False)
                 import traceback
                 self.logger.debug(traceback.format_exc(), silent=True)
                 return False

@@ -246,15 +246,39 @@ class Phase2Probing(BasePhase):
                                     name = svc_elem.get('name', '')
                                     product = svc_elem.get('product', '')
                                     version = svc_elem.get('version', '')
-                                    service = f"{name}"
+                                    
+                                    # Build service string - prefer product over name, add version if available
                                     if product:
-                                        service = f"{product}"
-                                    if version:
-                                        service += f" {version}"
-                                    if service:
+                                        service = product
+                                        if version:
+                                            service += f" {version}"
+                                    elif name:
+                                        service = name
+                                        if version:
+                                            service += f" {version}"
+                                    else:
+                                        continue
+                                    
+                                    # Skip protocol names (http, https, etc.)
+                                    if service.lower() in ('http', 'https', 'tcp', 'udp'):
+                                        continue
+                                    
+                                    if service and service not in services:
                                         services.append(service)
+                            
                             if ip in results and services:
-                                results[ip]['services'] = services
+                                # Remove similar duplicates (e.g., "AWS Elastic Load Balancing" vs "awselb/2.0")
+                                cleaned = []
+                                for s in services:
+                                    is_duplicate = False
+                                    for existing in cleaned:
+                                        # If one is abbreviation of another, skip the shorter
+                                        if s.lower() in existing.lower() or existing.lower() in s.lower():
+                                            is_duplicate = True
+                                            break
+                                    if not is_duplicate:
+                                        cleaned.append(s)
+                                results[ip]['services'] = cleaned
                     self.logger.tool_end('nmap', str(nmap_output), len(results))
                 except Exception as e:
                     self.logger.debug(f"nmap XML parse error: {e}")
@@ -329,10 +353,11 @@ class Phase2Probing(BasePhase):
             # Get WAF info
             waf = waf_results.get(url, '')
             
-            # Get ports - use host_ip (the resolved IP) to match port_results keys
+            # Get ports and services - use host_ip (the resolved IP) to match port_results keys
             ip = result.get('host_ip', '')
             port_data = port_results.get(ip, {})
             ports = port_data.get('ports', []) if isinstance(port_data, dict) else []
+            services = port_data.get('services', []) if isinstance(port_data, dict) else []
             
             probe = HttpProbe(
                 url=url,
@@ -342,6 +367,7 @@ class Phase2Probing(BasePhase):
                 waf=waf if waf else None,
                 waf_bypass_needed=bool(waf),
                 ports=ports,
+                services=services,
                 cdn=result.get('cdn', False),
                 ip=ip,
                 content_length=result.get('content_length', 0)

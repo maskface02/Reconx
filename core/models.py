@@ -52,6 +52,7 @@ class HttpProbe(BaseModel):
     waf: Optional[str] = None
     waf_bypass_needed: bool = False
     ports: List[int] = Field(default_factory=list)
+    services: List[str] = Field(default_factory=list)  # From nmap service detection
     cdn: bool = False
     ip: Optional[str] = None
     content_length: Optional[int] = None
